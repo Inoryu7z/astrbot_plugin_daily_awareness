@@ -1,0 +1,6 @@
+name: astrbot_plugin_daymind
+display_name: 心智手记
+version: 1.0.0
+description: 让Bot拥有自我意识，能够周期性思考当前状态，并在每日结束时生成日记存入记忆系统
+author: Inoryu7z
+repo: https://github.com/Inoryu7z/astrbot_plugin_daymind
