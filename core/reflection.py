@@ -25,6 +25,46 @@ class ReflectionGenerator:
         self.dependency_manager = dependency_manager
         self.message_cache = message_cache
 
+    def _normalize_persona_name(self, persona_name: str | None) -> str | None:
+        if persona_name is None:
+            return None
+        value = str(persona_name).strip()
+        return value or None
+
+    def _persona_entries(self) -> list[dict]:
+        raw = self.config.get("personas", [])
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    def _find_persona_config(self, persona_name: str | None) -> dict | None:
+        normalized = self._normalize_persona_name(persona_name)
+        if not normalized:
+            return None
+        for item in self._persona_entries():
+            candidate = self._normalize_persona_name(item.get("persona_name"))
+            if candidate == normalized:
+                return item
+        return None
+
+    def _persona_value(self, persona_name: str | None, key: str, default=None):
+        item = self._find_persona_config(persona_name)
+        if item is not None and key in item and item.get(key) is not None:
+            return item.get(key)
+        return self.config.get(key, default)
+
+    def _get_thinking_template(self, persona_name: str | None = None) -> str:
+        override = str(self._persona_value(persona_name, "thinking_prompt_template_override", "") or "").strip()
+        if override:
+            return override
+        default_template = str(self.config.get("default_thinking_prompt_template", "") or "").strip()
+        if default_template:
+            return default_template
+        legacy_template = str(self.config.get("thinking_prompt_template", "") or "").strip()
+        if legacy_template:
+            return legacy_template
+        return self._get_default_template()
+
     async def generate(
         self,
         current_time: str,
@@ -49,7 +89,7 @@ class ReflectionGenerator:
                 "display_name": "当前对象",
             }
             if session_id:
-                context_rounds = self._safe_non_negative_int(self.config.get("context_rounds", 2), default=2)
+                context_rounds = self._safe_non_negative_int(self._persona_value(persona_name, "context_rounds", 2), default=2)
                 recent_messages = await self.message_cache.get_recent_messages(session_id, context_rounds)
                 counterpart_info = await self.message_cache.get_latest_counterpart(session_id)
                 recent_messages = self._sanitize_recent_messages(recent_messages, counterpart_info)
@@ -77,7 +117,7 @@ class ReflectionGenerator:
                 resolved_desc,
                 counterpart_info,
             )
-            result = await self._call_llm(prompt)
+            result = await self._call_llm(prompt, resolved_name)
 
             if result:
                 result = self._post_process_result(result, counterpart_info)
@@ -101,17 +141,14 @@ class ReflectionGenerator:
         counterpart_info: Optional[dict] = None,
     ) -> str:
         """构建思考提示词"""
-        template = self.config.get("thinking_prompt_template", "")
-
-        if not template:
-            template = self._get_default_template()
+        template = self._get_thinking_template(persona_name)
 
         template = self._ensure_recent_awareness_placeholder(template)
 
         weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         weekday = weekday_names[datetime.datetime.now().weekday()]
 
-        mode = self.config.get("thinking_mode", "适量")
+        mode = self._persona_value(persona_name, "thinking_mode", "适量")
         if mode == "简洁":
             mode_desc = "简洁"
             length_hint = "- 控制在30字以内，必须用完整的一句话，同时概括当下身体动作与对应心境"
@@ -311,9 +348,9 @@ class ReflectionGenerator:
         except Exception:
             return default
 
-    async def _call_llm(self, prompt: str) -> Optional[str]:
+    async def _call_llm(self, prompt: str, persona_name: str | None = None) -> Optional[str]:
         """调用 LLM，并输出更明确的失败分类日志"""
-        provider_id = self.config.get("thinking_provider_id", "")
+        provider_id = self._persona_value(persona_name, "thinking_provider_id", "")
 
         try:
             if not provider_id:

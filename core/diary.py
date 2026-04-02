@@ -39,6 +39,46 @@ class DiaryGenerator:
             except Exception:
                 self.data_dir = Path(".")
 
+    def _normalize_persona_name(self, persona_name: str | None) -> str | None:
+        if persona_name is None:
+            return None
+        value = str(persona_name).strip()
+        return value or None
+
+    def _persona_entries(self) -> list[dict]:
+        raw = self.config.get("personas", [])
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    def _find_persona_config(self, persona_name: str | None) -> dict | None:
+        normalized = self._normalize_persona_name(persona_name)
+        if not normalized:
+            return None
+        for item in self._persona_entries():
+            candidate = self._normalize_persona_name(item.get("persona_name"))
+            if candidate == normalized:
+                return item
+        return None
+
+    def _persona_value(self, persona_name: str | None, key: str, default=None):
+        item = self._find_persona_config(persona_name)
+        if item is not None and key in item and item.get(key) is not None:
+            return item.get(key)
+        return self.config.get(key, default)
+
+    def _get_diary_template(self, persona_name: str | None = None) -> str:
+        override = str(self._persona_value(persona_name, "diary_prompt_template_override", "") or "").strip()
+        if override:
+            return override
+        default_template = str(self.config.get("default_diary_prompt_template", "") or "").strip()
+        if default_template:
+            return default_template
+        legacy_template = str(self.config.get("diary_prompt_template", "") or "").strip()
+        if legacy_template:
+            return legacy_template
+        return self._get_default_template()
+
     async def generate(
         self,
         date_str: str,
@@ -77,7 +117,7 @@ class DiaryGenerator:
                 resolved_desc,
                 recent_diaries,
             )
-            result = await self._call_llm(prompt)
+            result = await self._call_llm(prompt, resolved_name)
             if result:
                 result = self._post_process_result(result)
             return result
@@ -95,14 +135,11 @@ class DiaryGenerator:
         persona_desc: Optional[str] = None,
         recent_diaries: Optional[str] = None,
     ) -> str:
-        template = self.config.get("diary_prompt_template", "")
-
-        if not template:
-            template = self._get_default_template()
+        template = self._get_diary_template(persona_name)
 
         template = self._ensure_recent_diaries_placeholder(template)
 
-        mode = self.config.get("diary_mode", "适量")
+        mode = self._persona_value(persona_name, "diary_mode", "适量")
         if mode == "简洁":
             mode_desc = "简洁"
             length_hint = "- 简练记录今日核心经历与整体心境，有清晰的情绪落点，不堆砌细节；控制在300字左右"
@@ -237,7 +274,7 @@ class DiaryGenerator:
         return re.sub(r'[\\/:*?"<>|]+', '_', name).strip() or '未命名人格'
 
     def _load_recent_diaries(self, date_str: str, persona_name: str | None = None) -> str:
-        reference_count = self._safe_reference_count(self.config.get("diary_reference_count", 2), default=2)
+        reference_count = self._safe_reference_count(self._persona_value(persona_name, "diary_reference_count", 2), default=2)
         if reference_count == 0:
             return "无历史日记参考"
 
@@ -360,8 +397,8 @@ class DiaryGenerator:
 
         return result
 
-    async def _call_llm(self, prompt: str) -> Optional[str]:
-        provider_id = self.config.get("diary_provider_id", "")
+    async def _call_llm(self, prompt: str, persona_name: str | None = None) -> Optional[str]:
+        provider_id = self._persona_value(persona_name, "diary_provider_id", "")
 
         try:
             if not provider_id:

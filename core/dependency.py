@@ -42,24 +42,24 @@ class DependencyManager:
                 if star_name in self.DAYFLOW_PLUGIN_NAMES:
                     result["life_scheduler"] = True
                     self._life_scheduler_instance = star_instance
-                    logger.info(f"[DailyAwareness] 检测到日程插件 {star_name}，将获取日程数据")
+                    logger.info(f"[DayMind] 检测到日程插件 {star_name}，将获取日程数据")
 
                 elif star_name == "astrbot_plugin_livingmemory":
                     result["livingmemory"] = True
                     self._livingmemory_instance = star_instance
-                    logger.info("[DailyAwareness] 检测到 livingmemory 插件，日记将存入记忆系统")
+                    logger.info("[DayMind] 检测到 livingmemory 插件，日记将存入记忆系统")
 
             self._has_life_scheduler = result["life_scheduler"]
             self._has_livingmemory = result["livingmemory"]
 
             if not result["life_scheduler"]:
-                logger.info("[DailyAwareness] 未检测到 Dayflow 日程插件，将仅基于对话进行思考")
+                logger.info("[DayMind] 未检测到 Dayflow 日程插件，将仅基于对话进行思考")
 
             if not result["livingmemory"]:
-                logger.info("[DailyAwareness] 未检测到 livingmemory 插件，日记将仅本地存储")
+                logger.info("[DayMind] 未检测到 livingmemory 插件，日记将仅本地存储")
 
         except Exception as e:
-            logger.warning(f"[DailyAwareness] 检查依赖插件时出错: {e}")
+            logger.warning(f"[DayMind] 检查依赖插件时出错: {e}")
 
         return result
 
@@ -86,7 +86,7 @@ class DependencyManager:
         """获取日程数据"""
         if not self.has_life_scheduler:
             if debug:
-                logger.info("[DailyAwareness][debug] get_schedule_data: 未检测到日程插件")
+                logger.info("[DayMind][debug] get_schedule_data: 未检测到日程插件")
             return {}
 
         try:
@@ -100,15 +100,15 @@ class DependencyManager:
                 data = data if isinstance(data, dict) else {}
                 if debug:
                     logger.info(
-                        f"[DailyAwareness][debug] get_schedule_data success: session={session_id}, persona={persona_name}, "
+                        f"[DayMind][debug] get_schedule_data success: session={session_id}, persona={persona_name}, "
                         f"outfit={str(data.get('outfit', ''))[:120]}, schedule={str(data.get('schedule', ''))[:300]}"
                     )
                 return data
 
             if debug:
-                logger.info("[DailyAwareness][debug] get_schedule_data: 日程插件存在但未找到 get_life_context 接口")
+                logger.info("[DayMind][debug] get_schedule_data: 日程插件存在但未找到 get_life_context 接口")
         except Exception as e:
-            logger.warning(f"[DailyAwareness] 获取日程数据失败: {e}")
+            logger.warning(f"[DayMind] 获取日程数据失败: {e}")
 
         return {}
 
@@ -124,7 +124,7 @@ class DependencyManager:
                     if initializer and hasattr(initializer, "memory_engine"):
                         return initializer.memory_engine
         except Exception as e:
-            logger.warning(f"[DailyAwareness] 获取 memory_engine 失败: {e}")
+            logger.warning(f"[DayMind] 获取 memory_engine 失败: {e}")
 
         return None
 
@@ -184,7 +184,7 @@ class DependencyManager:
                     if persona_id:
                         result["persona_id"] = persona_id
         except Exception as e:
-            logger.debug(f"[DailyAwareness] 从 conversation_manager 获取 persona_id 失败: {e}")
+            logger.debug(f"[DayMind] 从 conversation_manager 获取 persona_id 失败: {e}")
 
         persona_mgr = getattr(self.context, "persona_manager", None)
         if not persona_mgr:
@@ -203,7 +203,7 @@ class DependencyManager:
             if not result["persona_id"]:
                 result["persona_id"] = persona_id or result["persona_name"]
         except Exception as e:
-            logger.debug(f"[DailyAwareness] 解析人格上下文失败: {e}")
+            logger.debug(f"[DayMind] 解析人格上下文失败: {e}")
 
         return result
 
@@ -225,7 +225,7 @@ class DependencyManager:
         """
         memory_engine = self.get_memory_engine()
         if not memory_engine:
-            logger.debug("[DailyAwareness] memory_engine 不可用")
+            logger.debug("[DayMind] memory_engine 不可用")
             return False
 
         try:
@@ -249,13 +249,13 @@ class DependencyManager:
             )
 
             logger.info(
-                f"[DailyAwareness] 日记已存入记忆系统: {date_str}, "
+                f"[DayMind] 日记已存入记忆系统: {date_str}, "
                 f"session_id={session_id}, persona_id={resolved_persona_id}"
             )
             return True
 
         except Exception as e:
-            logger.error(f"[DailyAwareness] 存入 livingmemory 失败: {e}", exc_info=True)
+            logger.error(f"[DayMind] 存入 livingmemory 失败: {e}", exc_info=True)
             return False
 
     async def mark_daymind_diary_memories_deleted(
@@ -300,10 +300,10 @@ class DependencyManager:
 
             if result["updated"]:
                 logger.info(
-                    f"[DailyAwareness] 已将旧日记记忆标记删除: date={date_str}, "
+                    f"[DayMind] 已将旧日记记忆标记删除: date={date_str}, "
                     f"session_id={session_id}, updated={result['updated']}"
                 )
         except Exception as e:
-            logger.error(f"[DailyAwareness] 标记旧日记记忆删除失败: {e}", exc_info=True)
+            logger.error(f"[DayMind] 标记旧日记记忆删除失败: {e}", exc_info=True)
 
         return result
