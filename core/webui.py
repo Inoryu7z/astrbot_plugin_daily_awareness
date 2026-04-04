@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -82,6 +82,22 @@ class DayMindWebUI:
         self._server_task = None
         logger.info("[DayMindWebUI] 已停止")
 
+    def _normalize_persona_name(self, persona_name: str | None) -> str | None:
+        if not self.plugin or not hasattr(self.plugin, "_canonical_persona_name"):
+            value = str(persona_name or "").strip()
+            return value or None
+        return self.plugin._canonical_persona_name(persona_name)
+
+    def _resolve_persona_query(self, persona_name: str | None) -> str | None:
+        normalized = self._normalize_persona_name(persona_name)
+        if normalized:
+            return normalized
+        if self.scheduler:
+            personas = list(self.scheduler.get_status().get("enabled_personas", []) or [])
+            if len(personas) == 1:
+                return personas[0]
+        return None
+
     def _setup_routes(self):
         @self._app.get("/", response_class=HTMLResponse)
         async def index():
@@ -92,8 +108,24 @@ class DayMindWebUI:
             return {"status": "ok", "plugin": "daymind", "version": "1.1.0"}
 
         @self._app.get("/api/status")
-        async def status():
+        async def status(persona_name: str | None = None):
             scheduler_status = self.scheduler.get_status() if self.scheduler else {}
+            available_personas = list(scheduler_status.get("enabled_personas", []) or [])
+            requested_persona = str(persona_name or "").strip() or None
+            effective_persona = self._resolve_persona_query(requested_persona)
+            persona_status = self.scheduler.get_status(effective_persona) if self.scheduler and effective_persona else {}
+            persona_status_map = {}
+            if self.scheduler:
+                for name in available_personas:
+                    item = self.scheduler.get_status(name)
+                    persona_status_map[name] = {
+                        "today_reflections_count": item.get("today_reflections_count", 0),
+                        "diary_generated_today": item.get("diary_generated_today", False),
+                        "last_reflection_time": item.get("last_reflection_time"),
+                        "current_mood": item.get("current_mood"),
+                        "current_awareness_text": item.get("current_awareness_text", ""),
+                    }
+            base_status = persona_status or scheduler_status
             return {
                 "success": True,
                 "data": {
@@ -104,15 +136,21 @@ class DayMindWebUI:
                     "enable_auto_diary": self.config.get("enable_auto_diary", True),
                     "store_diary_to_memory": self.config.get("store_diary_to_memory", True),
                     "livingmemory_available": bool(getattr(self.dependency_manager, "has_livingmemory", False)),
-                    "today_reflections_count": scheduler_status.get("today_reflections_count", 0),
-                    "diary_generated_today": scheduler_status.get("diary_generated_today", False),
-                    "last_reflection_time": scheduler_status.get("last_reflection_time"),
+                    "requested_persona": requested_persona,
+                    "effective_persona": effective_persona,
+                    "available_personas": available_personas,
+                    "persona_status_map": persona_status_map,
+                    "today_reflections_count": base_status.get("today_reflections_count", 0),
+                    "diary_generated_today": base_status.get("diary_generated_today", False),
+                    "last_reflection_time": base_status.get("last_reflection_time"),
                     "reflection_retention_days": scheduler_status.get("reflection_retention_days", 3),
                     "diary_retention_days": scheduler_status.get("diary_retention_days", -1),
                     "webui_default_window_days": scheduler_status.get("webui_default_window_days", 3),
                     "webui_default_theme": scheduler_status.get("webui_default_theme", "galaxy"),
                     "webui_default_mode": scheduler_status.get("webui_default_mode", "overview"),
-                    "reflection_reference_count": scheduler_status.get("reflection_reference_count", 2),
+                    "reflection_reference_count": base_status.get("reflection_reference_count", scheduler_status.get("reflection_reference_count", 2)),
+                    "current_mood": base_status.get("current_mood"),
+                    "current_awareness_text": base_status.get("current_awareness_text", ""),
                 },
             }
 
@@ -133,10 +171,11 @@ class DayMindWebUI:
             return {"success": True, "data": data}
 
         @self._app.post("/api/reflections/today/reset")
-        async def reset_today_reflections():
+        async def reset_today_reflections(persona_name: str | None = Query(default=None)):
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
-            data = await self.scheduler.reset_today_reflections()
+            effective_persona = self._resolve_persona_query(persona_name)
+            data = await self.scheduler.reset_today_reflections(effective_persona)
             if self.plugin and hasattr(self.plugin, "save_runtime_state"):
                 self.plugin.save_runtime_state()
             return {"success": True, "data": data}
@@ -148,21 +187,23 @@ class DayMindWebUI:
             return {"success": True, "data": self._list_diaries(days)}
 
         @self._app.get("/api/diaries/{date_str}")
-        async def get_diary(date_str: str):
-            item = self.scheduler.get_diary_item(date_str) if self.scheduler else self._read_diary(date_str)
+        async def get_diary(date_str: str, persona_name: str | None = Query(default=None)):
+            effective_persona = self._resolve_persona_query(persona_name)
+            item = self.scheduler.get_diary_item(date_str, effective_persona) if self.scheduler else self._read_diary(date_str, effective_persona)
             if not item:
                 raise HTTPException(status_code=404, detail="日记不存在")
             return {"success": True, "data": item}
 
         @self._app.patch("/api/diaries/{date_str}")
-        async def patch_diary(date_str: str, payload: MetaUpdatePayload):
+        async def patch_diary(date_str: str, payload: MetaUpdatePayload, persona_name: str | None = Query(default=None)):
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
+            effective_persona = self._resolve_persona_query(persona_name)
             data = None
             if payload.starred is not None:
-                data = await self.scheduler.set_diary_starred(date_str, payload.starred)
+                data = await self.scheduler.set_diary_starred(date_str, payload.starred, effective_persona)
             if payload.note is not None:
-                data = await self.scheduler.set_diary_note(date_str, payload.note)
+                data = await self.scheduler.set_diary_note(date_str, payload.note, effective_persona)
             if not data:
                 raise HTTPException(status_code=404, detail="日记不存在")
             if self.plugin and hasattr(self.plugin, "save_runtime_state"):
@@ -176,21 +217,23 @@ class DayMindWebUI:
             return {"success": True, "data": self._list_reflection_days(days)}
 
         @self._app.get("/api/reflections/{date_str}")
-        async def get_reflections(date_str: str):
-            item = self.scheduler.get_reflection_day_item(date_str) if self.scheduler else self._read_reflection_day(date_str)
+        async def get_reflections(date_str: str, persona_name: str | None = Query(default=None)):
+            effective_persona = self._resolve_persona_query(persona_name)
+            item = self.scheduler.get_reflection_day_item(date_str, effective_persona) if self.scheduler else self._read_reflection_day(date_str, effective_persona)
             if not item:
                 raise HTTPException(status_code=404, detail="思考流不存在")
             return {"success": True, "data": item}
 
         @self._app.patch("/api/reflections/{date_str}")
-        async def patch_reflections(date_str: str, payload: MetaUpdatePayload):
+        async def patch_reflections(date_str: str, payload: MetaUpdatePayload, persona_name: str | None = Query(default=None)):
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
+            effective_persona = self._resolve_persona_query(persona_name)
             data = None
             if payload.starred is not None:
-                data = await self.scheduler.set_reflection_day_starred(date_str, payload.starred)
+                data = await self.scheduler.set_reflection_day_starred(date_str, payload.starred, effective_persona)
             if payload.note is not None:
-                data = await self.scheduler.set_reflection_day_note(date_str, payload.note)
+                data = await self.scheduler.set_reflection_day_note(date_str, payload.note, effective_persona)
             if not data:
                 raise HTTPException(status_code=404, detail="思考流不存在")
             if self.plugin and hasattr(self.plugin, "save_runtime_state"):
@@ -202,6 +245,15 @@ class DayMindWebUI:
 
     def _reflections_dir(self) -> Path:
         return self.data_dir / "reflections"
+
+    def _scan_persona_dirs(self, root: Path) -> list[tuple[str, Path]]:
+        if not root.exists():
+            return []
+        pairs: list[tuple[str, Path]] = []
+        for item in root.iterdir():
+            if item.is_dir():
+                pairs.append((item.name, item))
+        return pairs
 
     def _safe_days(self, days: int | None) -> int:
         if days is None:
@@ -232,46 +284,68 @@ class DayMindWebUI:
 
         window_days = self._safe_days(days)
         items: list[dict[str, Any]] = []
-        for txt_file in diaries_dir.glob("*.txt"):
-            date_str = txt_file.stem.strip()
-            if not self._date_in_window(date_str, window_days):
-                continue
-            try:
-                content = txt_file.read_text(encoding="utf-8").strip()
-            except Exception:
-                content = ""
-            stat = txt_file.stat()
-            items.append(
-                {
-                    "date": date_str,
-                    "title": self._extract_title(content, date_str),
-                    "preview": self._build_preview(content, limit=120),
-                    "length": len(content),
-                    "updated_at": int(stat.st_mtime),
-                    "memory_status": self._read_memory_status(date_str),
-                    "starred": False,
-                    "note": "",
-                }
-            )
+        for persona_name, persona_dir in self._scan_persona_dirs(diaries_dir):
+            for txt_file in persona_dir.glob("*.txt"):
+                date_str = txt_file.stem.strip()
+                if not self._date_in_window(date_str, window_days):
+                    continue
+                try:
+                    content = txt_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    content = ""
+                stat = txt_file.stat()
+                items.append(
+                    {
+                        "date": date_str,
+                        "persona_name": persona_name,
+                        "title": self._extract_title(content, date_str),
+                        "preview": self._build_preview(content, limit=120),
+                        "length": len(content),
+                        "updated_at": int(stat.st_mtime),
+                        "memory_status": self._read_memory_status(date_str, persona_name),
+                        "starred": False,
+                        "note": "",
+                    }
+                )
 
-        items.sort(key=lambda x: x["date"], reverse=True)
+        items.sort(key=lambda x: (x["date"], x.get("persona_name", "")), reverse=True)
         return items
 
-    def _read_diary(self, date_str: str) -> dict[str, Any] | None:
-        txt_file = self._diaries_dir() / f"{date_str}.txt"
-        if not txt_file.exists():
-            return None
-        content = txt_file.read_text(encoding="utf-8").strip()
-        stat = txt_file.stat()
-        return {
-            "date": date_str,
-            "title": self._extract_title(content, date_str),
-            "content": content,
-            "updated_at": int(stat.st_mtime),
-            "memory_status": self._read_memory_status(date_str),
-            "starred": False,
-            "note": "",
-        }
+    def _read_diary(self, date_str: str, persona_name: str | None = None) -> dict[str, Any] | None:
+        normalized_persona = self._normalize_persona_name(persona_name)
+        if normalized_persona:
+            txt_file = self._diaries_dir() / normalized_persona / f"{date_str}.txt"
+            if not txt_file.exists():
+                return None
+            content = txt_file.read_text(encoding="utf-8").strip()
+            stat = txt_file.stat()
+            return {
+                "date": date_str,
+                "persona_name": normalized_persona,
+                "title": self._extract_title(content, date_str),
+                "content": content,
+                "updated_at": int(stat.st_mtime),
+                "memory_status": self._read_memory_status(date_str, normalized_persona),
+                "starred": False,
+                "note": "",
+            }
+        for current_persona, persona_dir in self._scan_persona_dirs(self._diaries_dir()):
+            txt_file = persona_dir / f"{date_str}.txt"
+            if not txt_file.exists():
+                continue
+            content = txt_file.read_text(encoding="utf-8").strip()
+            stat = txt_file.stat()
+            return {
+                "date": date_str,
+                "persona_name": current_persona,
+                "title": self._extract_title(content, date_str),
+                "content": content,
+                "updated_at": int(stat.st_mtime),
+                "memory_status": self._read_memory_status(date_str, current_persona),
+                "starred": False,
+                "note": "",
+            }
+        return None
 
     def _list_reflection_days(self, days: int | None = None) -> list[dict[str, Any]]:
         reflections_dir = self._reflections_dir()
@@ -280,60 +354,88 @@ class DayMindWebUI:
 
         window_days = self._safe_days(days)
         items: list[dict[str, Any]] = []
-        for fp in reflections_dir.glob("*.json"):
-            date_str = fp.stem.strip()
-            if not self._date_in_window(date_str, window_days):
-                continue
-            try:
-                import json
-                rows = json.loads(fp.read_text(encoding="utf-8"))
-                if not isinstance(rows, list):
+        for persona_name, persona_dir in self._scan_persona_dirs(reflections_dir):
+            for fp in persona_dir.glob("*.json"):
+                date_str = fp.stem.strip()
+                if not self._date_in_window(date_str, window_days):
+                    continue
+                try:
+                    import json
+                    rows = json.loads(fp.read_text(encoding="utf-8"))
+                    if not isinstance(rows, list):
+                        rows = []
+                except Exception:
                     rows = []
-            except Exception:
-                rows = []
-            preview = rows[-1].get("content", "") if rows else ""
-            items.append(
-                {
-                    "date": date_str,
-                    "count": len(rows),
-                    "preview": self._build_preview(preview, limit=90),
-                    "first_time": rows[0].get("time", "") if rows else "",
-                    "last_time": rows[-1].get("time", "") if rows else "",
-                    "starred": False,
-                    "note": "",
-                }
-            )
+                preview = rows[-1].get("content", "") if rows else ""
+                items.append(
+                    {
+                        "date": date_str,
+                        "persona_name": persona_name,
+                        "count": len(rows),
+                        "preview": self._build_preview(preview, limit=90),
+                        "first_time": rows[0].get("time", "") if rows else "",
+                        "last_time": rows[-1].get("time", "") if rows else "",
+                        "starred": False,
+                        "note": "",
+                    }
+                )
 
-        items.sort(key=lambda x: x["date"], reverse=True)
+        items.sort(key=lambda x: (x["date"], x.get("persona_name", "")), reverse=True)
         return items
 
-    def _read_reflection_day(self, date_str: str) -> dict[str, Any] | None:
-        fp = self._reflections_dir() / f"{date_str}.json"
-        if not fp.exists():
-            return None
-        import json
-        rows = json.loads(fp.read_text(encoding="utf-8"))
-        if not isinstance(rows, list):
-            rows = []
-        return {
-            "date": date_str,
-            "count": len(rows),
-            "items": rows,
-            "starred": False,
-            "note": "",
-        }
-
-    def _read_memory_status(self, date_str: str) -> str:
-        meta_file = self._diaries_dir() / f"{date_str}.json"
-        if not meta_file.exists():
-            return "unknown"
-        try:
+    def _read_reflection_day(self, date_str: str, persona_name: str | None = None) -> dict[str, Any] | None:
+        normalized_persona = self._normalize_persona_name(persona_name)
+        if normalized_persona:
+            fp = self._reflections_dir() / normalized_persona / f"{date_str}.json"
+            if not fp.exists():
+                return None
             import json
-            data = json.loads(meta_file.read_text(encoding="utf-8"))
-            status = str(data.get("memory_status") or "unknown").strip() or "unknown"
-            return status
-        except Exception:
-            return "unknown"
+            rows = json.loads(fp.read_text(encoding="utf-8"))
+            if not isinstance(rows, list):
+                rows = []
+            return {
+                "date": date_str,
+                "persona_name": normalized_persona,
+                "count": len(rows),
+                "items": rows,
+                "starred": False,
+                "note": "",
+            }
+        for current_persona, persona_dir in self._scan_persona_dirs(self._reflections_dir()):
+            fp = persona_dir / f"{date_str}.json"
+            if not fp.exists():
+                continue
+            import json
+            rows = json.loads(fp.read_text(encoding="utf-8"))
+            if not isinstance(rows, list):
+                rows = []
+            return {
+                "date": date_str,
+                "persona_name": current_persona,
+                "count": len(rows),
+                "items": rows,
+                "starred": False,
+                "note": "",
+            }
+        return None
+
+    def _read_memory_status(self, date_str: str, persona_name: str | None = None) -> str:
+        if persona_name:
+            meta_file = self._diaries_dir() / persona_name / f"{date_str}.json"
+            if not meta_file.exists():
+                return "unknown"
+            try:
+                import json
+                data = json.loads(meta_file.read_text(encoding="utf-8"))
+                status = str(data.get("memory_status") or "unknown").strip() or "unknown"
+                return status
+            except Exception:
+                return "unknown"
+        for name, _ in self._scan_persona_dirs(self._diaries_dir()):
+            status = self._read_memory_status(date_str, name)
+            if status != "unknown":
+                return status
+        return "unknown"
 
     def _extract_title(self, content: str, fallback: str) -> str:
         if not content:
@@ -1356,6 +1458,13 @@ class DayMindWebUI:
       <div class="brand-title">观测与星图</div>
 
       <div class="module">
+        <h3>当前人格</h3>
+        <div class="field">
+          <select id="personaSelect"></select>
+        </div>
+      </div>
+
+      <div class="module">
         <h3>界面模式</h3>
         <div class="row">
           <button id="viewOverview">观测</button>
@@ -1436,6 +1545,7 @@ class DayMindWebUI:
       <section class="star-mode glass" id="starMode">
         <div class="star-stage" id="starStage">
           <div class="star-head">
+            <div class="star-chip">人格：<strong id="starPersonaLabel">-</strong></div>
             <div class="star-chip">内容：<strong id="starModeLabel">Diary</strong></div>
             <div class="star-chip">窗口：<strong id="starWindowLabel">3 天</strong></div>
             <div class="star-chip">星球数：<strong id="starCountLabel">0</strong></div>
@@ -1459,6 +1569,7 @@ class DayMindWebUI:
       diaries: [],
       reflections: [],
       selectedDate: null,
+      selectedPersona: localStorage.getItem('daymind-selected-persona') || '',
       status: null,
       config: null,
       activeDetail: null,
@@ -1473,6 +1584,21 @@ class DayMindWebUI:
     const esc = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }) : '未知';
     const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+    function currentPersona() {
+      return (state.selectedPersona || '').trim();
+    }
+
+    function personaQuery() {
+      const p = currentPersona();
+      return p ? `persona_name=${encodeURIComponent(p)}` : '';
+    }
+
+    function appendPersona(url) {
+      const q = personaQuery();
+      if (!q) return url;
+      return url.includes('?') ? `${url}&${q}` : `${url}?${q}`;
+    }
 
     function modeLabel(mode) {
       return mode === 'diary' ? 'Diary' : 'Pulse';
@@ -1558,11 +1684,27 @@ class DayMindWebUI:
       loadStreams();
     }
 
+    function renderPersonaSelector() {
+      const status = state.status?.data || {};
+      const personas = status.available_personas || [];
+      const effective = status.effective_persona || currentPersona() || personas[0] || '';
+      const select = $('personaSelect');
+      select.innerHTML = personas.map(name => `<option value="${esc(name)}" ${name === effective ? 'selected' : ''}>${esc(name)}</option>`).join('');
+      if (!state.selectedPersona && effective) {
+        state.selectedPersona = effective;
+      } else if (effective) {
+        state.selectedPersona = effective;
+      }
+      localStorage.setItem('daymind-selected-persona', state.selectedPersona || '');
+      $('starPersonaLabel').textContent = state.selectedPersona || '未选择';
+    }
+
     function renderStatus() {
       const s = state.status?.data || {};
       $('summaryReflection').textContent = `${s.today_reflections_count ?? 0}`;
       $('summaryDiary').textContent = s.enable_auto_diary ? '运行中' : '关闭';
-      $('summaryLastReflection').textContent = s.last_reflection_time ? String(s.last_reflection_time).slice(11, 16) : '未记';
+      $('summaryLastReflection').textContent = s.last_reflection_time ? String(s.last_reflection_time) : '未记';
+      renderPersonaSelector();
     }
 
     function renderList() {
@@ -1580,9 +1722,9 @@ class DayMindWebUI:
       $('streamList').innerHTML = items.map(item => {
         if (state.mode === 'diary') {
           return `
-            <article class="entry ${state.selectedDate === item.date ? 'active' : ''}" data-date="${item.date}">
+            <article class="entry ${state.selectedDate === item.date ? 'active' : ''}" data-date="${item.date}" data-persona="${esc(item.persona_name || '')}">
               <div class="entry-top">
-                <div class="entry-title"><span class="numeric">${esc(item.date)}</span><span class="title-sep"> · </span>日记档案</div>
+                <div class="entry-title"><span class="numeric">${esc(item.date)}</span><span class="title-sep"> · </span>${esc(item.persona_name || '未知人格')} · 日记档案</div>
                 <div class="entry-date">Diary</div>
               </div>
               <div class="entry-preview">${esc(item.preview || '（无预览）')}</div>
@@ -1594,9 +1736,9 @@ class DayMindWebUI:
             </article>`;
         }
         return `
-          <article class="entry ${state.selectedDate === item.date ? 'active' : ''}" data-date="${item.date}">
+          <article class="entry ${state.selectedDate === item.date ? 'active' : ''}" data-date="${item.date}" data-persona="${esc(item.persona_name || '')}">
             <div class="entry-top">
-              <div class="entry-title"><span class="numeric">${esc(item.date)}</span><span class="title-sep"> · </span>思考脉冲</div>
+              <div class="entry-title"><span class="numeric">${esc(item.date)}</span><span class="title-sep"> · </span>${esc(item.persona_name || '未知人格')} · 思考脉冲</div>
               <div class="entry-date">Pulse</div>
             </div>
             <div class="entry-preview">${esc(item.preview || '（暂无预览）')}</div>
@@ -1609,7 +1751,7 @@ class DayMindWebUI:
       }).join('');
 
       document.querySelectorAll('.entry[data-date]').forEach(el => {
-        el.addEventListener('click', () => openDetail(el.dataset.date));
+        el.addEventListener('click', () => openDetail(el.dataset.date, false, false, el.dataset.persona || currentPersona()));
       });
     }
 
@@ -1626,7 +1768,7 @@ class DayMindWebUI:
       const detailCard = detail ? `
         <section class="card">
           <h4>边注与操作</h4>
-          <div class="detail-title"><span class="numeric">${esc(detail.date)}</span></div>
+          <div class="detail-title"><span class="numeric">${esc(detail.date)}</span><span class="title-sep"> · </span>${esc(detail.persona_name || currentPersona() || '未知人格')}</div>
           <div class="side-row">
             <button id="toggleStarBtn" class="${detail.starred ? 'active' : 'btn-soft'}">${detail.starred ? '★ 已星标' : '☆ 添加星标'}</button>
           </div>
@@ -1651,6 +1793,7 @@ class DayMindWebUI:
         <section class="card">
           <h4>内容状态</h4>
           <div class="stack">
+            <div class="info-line"><span>当前人格</span><strong>${esc(currentPersona() || status.effective_persona || '未选择')}</strong></div>
             <div class="info-line"><span>今日思考</span><strong>${status.today_reflections_count ?? 0}</strong></div>
             <div class="info-line"><span>自动日记</span><strong>${status.enable_auto_diary ? '运行中' : '关闭'}</strong></div>
             <div class="info-line"><span>默认主题</span><strong>${esc(cfg.webui_default_theme || status.webui_default_theme || 'galaxy')}</strong></div>
@@ -1689,7 +1832,7 @@ class DayMindWebUI:
         <section class="card">
           <h4>今日操作</h4>
           <div class="stack">
-            <div class="hint">把今天的思考流重置为一张白纸。这个操作会清空今日本地思考记录。</div>
+            <div class="hint">把今天的思考流重置为一张白纸。这个操作会清空当前人格今日本地思考记录。</div>
             <button id="resetTodayBtn" class="btn-danger btn-block">清除今日思考流</button>
           </div>
         </section>`;
@@ -1715,12 +1858,12 @@ class DayMindWebUI:
     }
 
     function galaxyBuildKey() {
-      return `${state.mode}::${state.days}::${state.starredOnly}::${currentItems().map(x => x.date).join('|')}`;
+      return `${currentPersona()}::${state.mode}::${state.days}::${state.starredOnly}::${currentItems().map(x => `${x.persona_name || ''}@${x.date}`).join('|')}`;
     }
 
     function updateGalaxySelection() {
       document.querySelectorAll('.planet').forEach(el => {
-        el.classList.toggle('active', el.dataset.date === state.activeStarDate);
+        el.classList.toggle('active', el.dataset.date === state.activeStarDate && (el.dataset.persona || '') === (currentPersona() || ''));
       });
     }
 
@@ -1760,6 +1903,7 @@ class DayMindWebUI:
       const root = $('orbitField');
       const items = currentItems();
       $('starCountLabel').textContent = String(items.length);
+      $('starPersonaLabel').textContent = currentPersona() || '未选择';
       if (!items.length) {
         root.innerHTML = '';
         state.galaxyBuiltFor = '';
@@ -1799,7 +1943,7 @@ class DayMindWebUI:
           const starredClass = item.starred ? 'starred-planet' : '';
           const transform = `translate(-50%, -50%) rotate(${angle}deg) translateY(calc(var(--size) / -2)) rotate(${-angle}deg)`;
           idx += 1;
-          return `<button class="planet ${ringed} ${starredClass}" data-date="${item.date}" data-transform="${transform}" style="--planet-size:${size}px;--planet-color:${color};--planet-transform:${transform};transform:${transform};"></button>`;
+          return `<button class="planet ${ringed} ${starredClass}" data-date="${item.date}" data-persona="${esc(item.persona_name || currentPersona() || '')}" data-transform="${transform}" style="--planet-size:${size}px;--planet-color:${color};--planet-transform:${transform};transform:${transform};"></button>`;
         }).join('');
         return `<div class="orbit ${orbit.reverse ? 'reverse' : ''} ${orbit.glow ? 'glow' : ''}" style="--size:${orbit.size}px;--speed:${orbit.speed}s;">${stars}</div>`;
       }).join('');
@@ -1815,16 +1959,21 @@ class DayMindWebUI:
       state.config = res.data || {};
     }
 
+    async function loadStatus() {
+      state.status = await api(appendPersona('/api/status'));
+      renderStatus();
+    }
+
     async function loadStreams(keepSelection = false) {
       const selected = keepSelection ? state.selectedDate : null;
       const [diariesRes, reflectionsRes, statusRes, configRes] = await Promise.all([
         api(`/api/diaries?days=${state.days}&starred_only=${state.starredOnly}`),
         api(`/api/reflections?days=${state.days}&starred_only=${state.starredOnly}`),
-        api('/api/status'),
+        api(appendPersona('/api/status')),
         api('/api/config')
       ]);
-      state.diaries = diariesRes.data || [];
-      state.reflections = reflectionsRes.data || [];
+      state.diaries = (diariesRes.data || []).filter(x => !currentPersona() || (x.persona_name || '') === currentPersona());
+      state.reflections = (reflectionsRes.data || []).filter(x => !currentPersona() || (x.persona_name || '') === currentPersona());
       state.status = statusRes;
       state.config = configRes.data || {};
       renderStatus();
@@ -1833,9 +1982,9 @@ class DayMindWebUI:
       renderSidePanel();
 
       if (selected) {
-        const exists = getCurrentCollection().some(x => x.date === selected);
+        const exists = getCurrentCollection().some(x => x.date === selected && (!currentPersona() || (x.persona_name || '') === currentPersona()));
         if (exists) {
-          await openDetail(selected, false, true);
+          await openDetail(selected, false, true, currentPersona());
         } else {
           state.selectedDate = null;
           state.activeDetail = null;
@@ -1848,9 +1997,10 @@ class DayMindWebUI:
     async function toggleStarred() {
       if (!state.activeDetail) return;
       const next = !state.activeDetail.starred;
-      const url = state.mode === 'diary'
+      const base = state.mode === 'diary'
         ? `/api/diaries/${state.activeDetail.date}`
         : `/api/reflections/${state.activeDetail.date}`;
+      const url = appendPersona(base);
       const res = await api(url, { method: 'PATCH', body: JSON.stringify({ starred: next }) });
       state.activeDetail = { ...state.activeDetail, ...(res.data || {}), starred: next };
       setToast(next ? '已星标' : '已取消');
@@ -1862,9 +2012,10 @@ class DayMindWebUI:
       state.savingNote = true;
       try {
         const note = $('noteInput')?.value || '';
-        const url = state.mode === 'diary'
+        const base = state.mode === 'diary'
           ? `/api/diaries/${state.activeDetail.date}`
           : `/api/reflections/${state.activeDetail.date}`;
+        const url = appendPersona(base);
         const res = await api(url, { method: 'PATCH', body: JSON.stringify({ note }) });
         state.activeDetail = { ...state.activeDetail, ...(res.data || {}), note };
         setToast('已保存');
@@ -1888,27 +2039,31 @@ class DayMindWebUI:
     }
 
     async function resetTodayReflections() {
-      const ok = confirm('确定清除今天的思考流吗？这会把今日思考重置为空。');
+      const ok = confirm('确定清除今天的思考流吗？这会把当前人格今日思考重置为空。');
       if (!ok) return;
-      await api('/api/reflections/today/reset', { method: 'POST' });
+      await api(appendPersona('/api/reflections/today/reset'), { method: 'POST' });
       setToast('已清空');
       await loadStreams(true);
     }
 
-    async function openDetail(date, fromStar = false, silentRefresh = false) {
+    async function openDetail(date, fromStar = false, silentRefresh = false, personaName = '') {
       state.selectedDate = date;
+      if (personaName) {
+        state.selectedPersona = personaName;
+        localStorage.setItem('daymind-selected-persona', state.selectedPersona || '');
+      }
       renderList();
 
       if (state.mode === 'diary') {
-        const res = await api(`/api/diaries/${date}`);
+        const res = await api(appendPersona(`/api/diaries/${date}`));
         const d = res.data;
         state.activeDetail = d;
         $('detailPanel').innerHTML = `
           <article class="folio">
             <div class="folio-head">
               <div class="folio-tag">Diary</div>
-              <div class="folio-date">${esc(d.date)}</div>
-              <div class="folio-title">${formatComposedTitle(d.date, '日记档案')}</div>
+              <div class="folio-date">${esc(d.date)} · ${esc(d.persona_name || currentPersona() || '未知人格')}</div>
+              <div class="folio-title">${formatComposedTitle(d.date, `${d.persona_name || currentPersona() || '未知人格'} · 日记档案`)}</div>
               <div class="folio-subtitle">Diary</div>
               <div class="meta-grid">
                 <div class="meta"><div class="k">日期</div><div class="v numeric">${esc(d.date)}</div></div>
@@ -1918,15 +2073,15 @@ class DayMindWebUI:
             <div class="paper"><div class="content">${esc(d.content || '（空）')}</div></div>
           </article>`;
       } else {
-        const res = await api(`/api/reflections/${date}`);
+        const res = await api(appendPersona(`/api/reflections/${date}`));
         const d = res.data;
         state.activeDetail = d;
         $('detailPanel').innerHTML = `
           <article class="folio">
             <div class="folio-head">
               <div class="folio-tag">Pulse</div>
-              <div class="folio-date">${esc(d.date)}</div>
-              <div class="folio-title">${formatComposedTitle(d.date, '思考脉冲')}</div>
+              <div class="folio-date">${esc(d.date)} · ${esc(d.persona_name || currentPersona() || '未知人格')}</div>
+              <div class="folio-title">${formatComposedTitle(d.date, `${d.persona_name || currentPersona() || '未知人格'} · 思考脉冲`)}</div>
               <div class="folio-subtitle">Pulse</div>
               <div class="meta-grid">
                 <div class="meta"><div class="k">日期</div><div class="v numeric">${esc(d.date)}</div></div>
@@ -1959,27 +2114,28 @@ class DayMindWebUI:
       if (state.jumping) return;
       const items = currentItems();
       if (!items.length) return;
-      const chosen = planet ? items.find(x => x.date === planet.dataset.date) : pick(items);
+      const chosen = planet
+        ? items.find(x => x.date === planet.dataset.date && (x.persona_name || currentPersona() || '') === (planet.dataset.persona || currentPersona() || ''))
+        : pick(items);
       if (!chosen) return;
 
       state.jumping = true;
       state.activeStarDate = chosen.date;
       updateGalaxySelection();
 
-      const fallbackPlanet = planet || document.querySelector(`.planet[data-date="${chosen.date}"]`) || document.querySelector('.planet');
+      const fallbackPlanet = planet || document.querySelector(`.planet[data-date="${chosen.date}"][data-persona="${chosen.persona_name || currentPersona() || ''}"]`) || document.querySelector('.planet');
       if (fallbackPlanet) prepareJumpFromPlanet(fallbackPlanet);
 
       await new Promise(r => setTimeout(r, 320));
       setView('overview');
-      await openDetail(chosen.date, true);
+      await openDetail(chosen.date, true, false, chosen.persona_name || currentPersona());
       resetJumpState();
       state.jumping = false;
     }
 
     async function init() {
-      state.status = await api('/api/status');
       await loadConfig();
-      renderStatus();
+      await loadStatus();
       setView(state.config?.webui_default_mode || state.view || 'overview');
       setDays(state.days);
       setMode('diary');
@@ -1990,12 +2146,22 @@ class DayMindWebUI:
     $('viewStar').addEventListener('click', () => { setView('star'); buildGalaxyIfNeeded(true); });
     $('tabDiary').addEventListener('click', () => setMode('diary'));
     $('tabReflection').addEventListener('click', () => setMode('reflection'));
-    $('randomEnter').addEventListener('click', () => enterFromStar(document.querySelector('.planet')));
+    $('randomEnter').addEventListener('click', () => enterFromStar());
     $('searchInput').addEventListener('input', renderList);
     $('starredOnlyBtn').addEventListener('click', async () => {
       state.starredOnly = !state.starredOnly;
       $('starredOnlyBtn').classList.toggle('active', state.starredOnly);
       await loadStreams(false);
+    });
+    $('personaSelect').addEventListener('change', async (e) => {
+      state.selectedPersona = String(e.target.value || '').trim();
+      localStorage.setItem('daymind-selected-persona', state.selectedPersona || '');
+      state.selectedDate = null;
+      state.activeDetail = null;
+      state.activeStarDate = null;
+      await loadStreams(false);
+      renderEmpty();
+      renderSidePanel();
     });
     document.querySelectorAll('[data-days]').forEach(btn => btn.addEventListener('click', () => setDays(btn.dataset.days)));
 

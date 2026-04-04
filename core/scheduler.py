@@ -8,7 +8,6 @@ import hashlib
 from typing import Optional, Any
 from pathlib import Path
 from astrbot.api import logger
-from astrbot.api.event import MessageChain
 
 from .reflection import ReflectionGenerator
 from .diary import DiaryGenerator
@@ -16,9 +15,10 @@ from .dependency import DependencyManager
 from .message_cache import MessageCache
 from .silent_hours import SilentHoursChecker
 from .mood import MoodManager
+from .persona_utils import PersonaConfigMixin
 
 
-class AwarenessScheduler:
+class AwarenessScheduler(PersonaConfigMixin):
     """自我感知调度器（按人格分桶）"""
 
     RUNTIME_CONFIG_KEYS = {
@@ -41,6 +41,8 @@ class AwarenessScheduler:
         silent_hours: SilentHoursChecker,
         session_persona_map: dict[str, str] | None = None,
         mood_manager: MoodManager | None = None,
+        state_persist_callback=None,
+        session_persona_activity_map: dict[str, str] | None = None,
     ):
         self.context = context
         self.config = config
@@ -51,7 +53,9 @@ class AwarenessScheduler:
         self.message_cache = message_cache
         self.silent_hours = silent_hours
         self.session_persona_map = session_persona_map if session_persona_map is not None else {}
+        self.session_persona_activity_map = session_persona_activity_map if session_persona_activity_map is not None else {}
         self.mood_manager = mood_manager
+        self.state_persist_callback = state_persist_callback
 
         self.runtime_config: dict[str, Any] = {
             "reflection_retention_days": self._safe_retention_days(config.get("reflection_retention_days", 3), 3),
@@ -84,6 +88,15 @@ class AwarenessScheduler:
                 pass
         logger.info("[Scheduler] 调度器已停止")
 
+    def _persist_state(self):
+        callback = self.state_persist_callback
+        if not callback:
+            return
+        try:
+            callback()
+        except Exception as e:
+            logger.warning(f"[Scheduler] 持久化运行状态失败: {e}")
+
     def _config_get(self, key: str, default=None):
         if key in self.RUNTIME_CONFIG_KEYS:
             return self.runtime_config.get(key, default)
@@ -108,27 +121,16 @@ class AwarenessScheduler:
             item.pop("previous_mood", None)
         return item
 
-    def _persona_entries(self) -> list[dict[str, Any]]:
-        raw = self.config.get("personas", [])
-        if not isinstance(raw, list):
-            return []
-        return [item for item in raw if isinstance(item, dict)]
-
-    def _find_persona_config(self, persona_name: str | None) -> dict[str, Any] | None:
-        normalized = self._normalize_persona_name(persona_name)
-        if not normalized:
-            return None
-        for item in self._persona_entries():
-            candidate = self._normalize_persona_name(item.get("persona_name"))
-            if candidate == normalized:
-                return item
-        return None
-
-    def _persona_value(self, persona_name: str | None, key: str, default=None):
-        item = self._find_persona_config(persona_name)
-        if item is not None and key in item and item.get(key) is not None:
-            return item.get(key)
-        return self.config.get(key, default)
+    def _touch_session_persona(self, session_id: str | None, persona_name: str | None = None):
+        session_key = str(session_id or "").strip()
+        if not session_key:
+            return
+        if persona_name is not None:
+            canonical_persona = self._canonical_persona_name(persona_name)
+            if canonical_persona:
+                self.session_persona_map[session_key] = canonical_persona
+        if session_key in self.session_persona_map:
+            self.session_persona_activity_map[session_key] = datetime.datetime.now().isoformat()
 
     def load_runtime_config(self, runtime_config: dict[str, Any] | None):
         runtime_config = runtime_config or {}
@@ -179,47 +181,36 @@ class AwarenessScheduler:
             await self._apply_reflection_retention()
         if "diary_retention_days" in changed:
             await self._apply_diary_retention()
+        self._persist_state()
         return self.get_runtime_config()
 
-    def _normalize_persona_name(self, persona_name: str | None) -> str | None:
-        if persona_name is None:
-            return None
-        value = str(persona_name).strip()
-        return value or None
-
     def _enabled_personas(self) -> list[str]:
-        persona_entries = self._persona_entries()
-        if persona_entries:
-            enabled: list[str] = []
-            for item in persona_entries:
-                name = self._normalize_persona_name(item.get("persona_name"))
-                if name:
-                    enabled.append(name)
-            return enabled
-
-        raw = self.config.get("enabled_personas", [])
-        if isinstance(raw, str):
-            parts = re.split(r"[,\n\r]+", raw)
-            return [x.strip() for x in parts if x and x.strip()]
-        if isinstance(raw, list):
-            return [str(x).strip() for x in raw if str(x).strip()]
-        return []
+        enabled: list[str] = []
+        seen: set[str] = set()
+        for item in self._persona_entries():
+            name = self._canonical_persona_name(item.get("persona_name") or item.get("name") or item.get("select_persona"))
+            if not name:
+                continue
+            token = self._normalize_persona_token(name)
+            if token in seen:
+                continue
+            enabled.append(name)
+            seen.add(token)
+        return enabled
 
     def is_persona_enabled(self, persona_name: str | None) -> bool:
-        normalized = self._normalize_persona_name(persona_name)
-        if not normalized:
+        canonical = self._canonical_persona_name(persona_name)
+        if not canonical:
             return False
-        if self._persona_entries():
-            return self._find_persona_config(normalized) is not None
-        enabled = self._enabled_personas()
-        if not enabled:
-            return False
-        return normalized in enabled
+        return canonical in self._enabled_personas()
 
     def _ensure_persona_state(self, persona_name: str) -> dict[str, Any]:
-        persona_name = self._normalize_persona_name(persona_name) or "未命名人格"
+        persona_name = self._canonical_persona_name(persona_name) or "未命名人格"
         if persona_name not in self.persona_states:
+            now = datetime.datetime.now()
             self.persona_states[persona_name] = {
+                "state_date": now.strftime("%Y-%m-%d"),
+                "state_created_at": now.isoformat(),
                 "current_awareness_text": "",
                 "today_reflections": [],
                 "last_reflection_time": None,
@@ -252,7 +243,10 @@ class AwarenessScheduler:
     def export_persona_states(self) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         for persona_name, state in self.persona_states.items():
-            payload[persona_name] = {
+            canonical = self._canonical_persona_name(persona_name) or persona_name
+            payload[canonical] = {
+                "state_date": str(state.get("state_date") or ""),
+                "state_created_at": str(state.get("state_created_at") or ""),
                 "current_awareness_text": state.get("current_awareness_text", ""),
                 "today_reflections": list(state.get("today_reflections", []) or []),
                 "last_reflection_time": state.get("last_reflection_time").isoformat() if state.get("last_reflection_time") else None,
@@ -263,7 +257,7 @@ class AwarenessScheduler:
                 "last_diary_check_minute": int(state.get("last_diary_check_minute", -1) or -1),
                 "diary_generated_today": bool(state.get("diary_generated_today", False)),
                 "last_auto_diary_trigger_key": str(state.get("last_auto_diary_trigger_key") or ""),
-                "diary_memory_version_counter": dict(state.get("diary_memory_version_counter", {}) or {}),
+                "diary_memory_version_counter": self._trim_diary_memory_version_counter(state.get("diary_memory_version_counter")),
                 "current_mood": self._simplify_mood(state.get("current_mood")),
                 "previous_mood": self._simplify_mood(state.get("previous_mood")),
                 "today_moods": [self._simplify_mood(x) for x in (state.get("today_moods", []) or []) if self._simplify_mood(x)],
@@ -287,7 +281,15 @@ class AwarenessScheduler:
         for persona_name, state in (saved or {}).items():
             if not isinstance(state, dict):
                 continue
-            item = self._ensure_persona_state(str(persona_name))
+            canonical_name = self._canonical_persona_name(persona_name)
+            if not canonical_name:
+                continue
+            item = self._ensure_persona_state(canonical_name)
+            state_date = str(state.get("state_date") or "").strip()
+            item["state_date"] = state_date or datetime.datetime.now().strftime("%Y-%m-%d")
+            state_created_at = str(state.get("state_created_at") or "").strip()
+            if state_created_at:
+                item["state_created_at"] = state_created_at
             item["current_awareness_text"] = str(state.get("current_awareness_text") or "")
             item["today_reflections"] = [str(x) for x in (state.get("today_reflections") or []) if str(x).strip()]
             for field in ["last_reflection_time", "last_auto_reflection_time", "last_reflection_failure_time", "last_reflection_cooldown_until"]:
@@ -300,7 +302,7 @@ class AwarenessScheduler:
             item["last_diary_check_minute"] = self._safe_int(state.get("last_diary_check_minute"), -1)
             item["diary_generated_today"] = bool(state.get("diary_generated_today", False))
             item["last_auto_diary_trigger_key"] = str(state.get("last_auto_diary_trigger_key") or "")
-            item["diary_memory_version_counter"] = dict(state.get("diary_memory_version_counter") or {})
+            item["diary_memory_version_counter"] = self._trim_diary_memory_version_counter(state.get("diary_memory_version_counter"))
             item["current_mood"] = self._simplify_mood(state.get("current_mood"))
             item["previous_mood"] = self._simplify_mood(state.get("previous_mood"))
             item["today_moods"] = [self._simplify_mood(x) for x in (state.get("today_moods", []) or []) if self._simplify_mood(x)]
@@ -317,20 +319,11 @@ class AwarenessScheduler:
             item["last_selected_session_id"] = state.get("last_selected_session_id")
             item["last_selected_session_source"] = str(state.get("last_selected_session_source") or "none")
 
-    def import_legacy_single_state(self, reflections: list[str], current_text: str, diary_generated_today: bool, last_diary_date: str):
-        enabled = self._enabled_personas()
-        if len(enabled) != 1:
-            return
-        state = self._ensure_persona_state(enabled[0])
-        state["today_reflections"] = [str(x) for x in (reflections or []) if str(x).strip()]
-        state["current_awareness_text"] = str(current_text or "")
-        state["diary_generated_today"] = bool(diary_generated_today)
-        state["last_diary_date"] = str(last_diary_date or "")
-
     async def get_current_awareness_for_session(self, session_id: str | None) -> str:
         if not session_id:
             return ""
-        persona_name = self.session_persona_map.get(session_id)
+        self._touch_session_persona(session_id)
+        persona_name = self._canonical_persona_name(self.session_persona_map.get(session_id))
         if not persona_name:
             return ""
         state = self.persona_states.get(persona_name) or {}
@@ -339,13 +332,14 @@ class AwarenessScheduler:
     def get_current_mood_for_session(self, session_id: str | None) -> dict | None:
         if not session_id:
             return None
-        persona_name = self.session_persona_map.get(session_id)
+        self._touch_session_persona(session_id)
+        persona_name = self._canonical_persona_name(self.session_persona_map.get(session_id))
         if not persona_name:
             return None
         return self.get_current_mood_for_persona(persona_name)
 
     def get_current_mood_for_persona(self, persona_name: str | None) -> dict | None:
-        normalized = self._normalize_persona_name(persona_name)
+        normalized = self._canonical_persona_name(persona_name)
         if not normalized:
             return None
         state = self.persona_states.get(normalized)
@@ -360,7 +354,7 @@ class AwarenessScheduler:
         return current
 
     def get_previous_mood_for_persona(self, persona_name: str | None) -> dict | None:
-        normalized = self._normalize_persona_name(persona_name)
+        normalized = self._canonical_persona_name(persona_name)
         if not normalized:
             return None
         state = self.persona_states.get(normalized)
@@ -369,7 +363,7 @@ class AwarenessScheduler:
         return self._simplify_mood(state.get("previous_mood"))
 
     def get_today_moods_for_persona(self, persona_name: str | None, limit: int = 10) -> list[dict]:
-        normalized = self._normalize_persona_name(persona_name)
+        normalized = self._canonical_persona_name(persona_name)
         if not normalized:
             return []
         state = self.persona_states.get(normalized)
@@ -390,13 +384,14 @@ class AwarenessScheduler:
 
     def _run_today_reset_for_persona(self, persona_name: str, today_str: str):
         state = self._ensure_persona_state(persona_name)
+        state["state_date"] = today_str
+        state["state_created_at"] = datetime.datetime.now().isoformat()
         state["today_reflections"] = []
         state["current_awareness_text"] = ""
         state["last_reflection_time"] = None
         state["last_auto_reflection_time"] = None
         state["last_reflection_failure_time"] = None
         state["last_reflection_cooldown_until"] = None
-        state["last_diary_date"] = today_str
         state["last_diary_check_minute"] = -1
         state["diary_generated_today"] = False
         state["last_auto_diary_trigger_key"] = ""
@@ -413,7 +408,7 @@ class AwarenessScheduler:
     async def reset_today_reflections(self, persona_name: str | None = None) -> dict[str, Any]:
         now = datetime.datetime.now()
         today_str = now.strftime("%Y-%m-%d")
-        target_persona = self._normalize_persona_name(persona_name)
+        target_persona = self._canonical_persona_name(persona_name)
         if not target_persona:
             enabled = self._enabled_personas()
             target_persona = enabled[0] if enabled else None
@@ -425,6 +420,8 @@ class AwarenessScheduler:
             reflections_file.unlink(missing_ok=True)
             removed_local_file = True
         state = self._ensure_persona_state(target_persona)
+        state["state_date"] = today_str
+        state["state_created_at"] = now.isoformat()
         state["today_reflections"] = []
         state["current_awareness_text"] = ""
         state["last_reflection_time"] = None
@@ -439,10 +436,12 @@ class AwarenessScheduler:
         state["last_dedupe_source"] = None
         state["consecutive_failures"] = 0
         self._clear_reflection_error(target_persona)
+        self._persist_state()
         return {"date": today_str, "persona_name": target_persona, "removed_local_file": removed_local_file, "today_reflections_count": 0, "current_awareness_text": ""}
 
     def _sanitize_persona_path(self, persona_name: str) -> str:
-        return re.sub(r'[\\/:*?"<>|]+', '_', persona_name).strip() or '未命名人格'
+        canonical = self._canonical_persona_name(persona_name) or persona_name
+        return re.sub(r'[\/:*?"<>|]+', '_', canonical).strip() or '未命名人格'
 
     def _diaries_dir(self, persona_name: str | None = None) -> Path:
         base = Path(self.data_dir) / "diaries"
@@ -555,13 +554,14 @@ class AwarenessScheduler:
 
     def get_diary_item(self, date_str: str, persona_name: str | None = None) -> dict[str, Any] | None:
         if persona_name:
-            txt_file = self._diary_text_path(date_str, persona_name)
+            canonical_name = self._canonical_persona_name(persona_name) or persona_name
+            txt_file = self._diary_text_path(date_str, canonical_name)
             if not txt_file.exists():
                 return None
             content = txt_file.read_text(encoding="utf-8").strip()
             stat = txt_file.stat()
-            meta = self._load_diary_meta(date_str, persona_name)
-            return {"date": date_str, "persona_name": persona_name, "title": self._extract_title(content, date_str), "content": content, "updated_at": int(stat.st_mtime), "memory_status": meta.get("memory_status", "unknown"), "starred": bool(meta.get("starred", False)), "note": str(meta.get("note") or "")}
+            meta = self._load_diary_meta(date_str, canonical_name)
+            return {"date": date_str, "persona_name": canonical_name, "title": self._extract_title(content, date_str), "content": content, "updated_at": int(stat.st_mtime), "memory_status": meta.get("memory_status", "unknown"), "starred": bool(meta.get("starred", False)), "note": str(meta.get("note") or "")}
         for dir_name, _ in self._scan_persona_dirs(self._diaries_dir()):
             item = self.get_diary_item(date_str, dir_name)
             if item:
@@ -593,12 +593,13 @@ class AwarenessScheduler:
 
     def get_reflection_day_item(self, date_str: str, persona_name: str | None = None) -> dict[str, Any] | None:
         if persona_name:
-            fp = self._reflection_day_path(date_str, persona_name)
+            canonical_name = self._canonical_persona_name(persona_name) or persona_name
+            fp = self._reflection_day_path(date_str, canonical_name)
             if not fp.exists():
                 return None
-            rows = self._load_reflection_day_rows(date_str, persona_name)
-            meta = self._extract_reflection_day_meta(date_str, persona_name, rows)
-            return {"date": date_str, "persona_name": persona_name, "count": len(rows), "items": rows, "starred": bool(meta.get("starred", False)), "note": str(meta.get("note") or "")}
+            rows = self._load_reflection_day_rows(date_str, canonical_name)
+            meta = self._extract_reflection_day_meta(date_str, canonical_name, rows)
+            return {"date": date_str, "persona_name": canonical_name, "count": len(rows), "items": rows, "starred": bool(meta.get("starred", False)), "note": str(meta.get("note") or "")}
         for dir_name, _ in self._scan_persona_dirs(self._reflections_dir()):
             item = self.get_reflection_day_item(date_str, dir_name)
             if item:
@@ -699,6 +700,83 @@ class AwarenessScheduler:
             return self._safe_seconds(configured, min(interval_seconds, 300))
         return min(interval_seconds, 300)
 
+    def _get_reflection_generation_retry_count(self, persona_name: str | None) -> int:
+        return self._safe_non_negative_int(self._persona_value(persona_name, "reflection_generation_retry_count", 2), default=2)
+
+    def _get_reflection_generation_retry_delay_seconds(self, persona_name: str | None) -> float:
+        try:
+            return max(float(self._persona_value(persona_name, "reflection_generation_retry_delay_seconds", 2)), 0.0)
+        except Exception:
+            return 2.0
+
+    def _get_diary_generation_retry_count(self, persona_name: str | None) -> int:
+        return self._safe_non_negative_int(self._persona_value(persona_name, "diary_generation_retry_count", 2), default=2)
+
+    def _get_diary_generation_retry_delay_seconds(self, persona_name: str | None) -> float:
+        try:
+            return max(float(self._persona_value(persona_name, "diary_generation_retry_delay_seconds", 2)), 0.0)
+        except Exception:
+            return 2.0
+
+    async def _run_reflection_generation_with_retries(
+        self,
+        current_time_str: str,
+        selected_session_id: str | None,
+        persona_name: str,
+        resolved_desc: str | None,
+    ) -> str | None:
+        max_retries = self._get_reflection_generation_retry_count(persona_name)
+        retry_delay = self._get_reflection_generation_retry_delay_seconds(persona_name)
+        last_result = None
+        for attempt in range(max_retries + 1):
+            last_result = await self.reflection_generator.generate(
+                current_time_str,
+                selected_session_id,
+                self._build_recent_reflections_text(persona_name),
+                persona_name,
+                resolved_desc,
+            )
+            if last_result:
+                if attempt > 0:
+                    logger.info(f"[Scheduler] 思考生成重试成功: persona={persona_name}, attempt={attempt + 1}")
+                return last_result
+            if attempt < max_retries:
+                logger.warning(f"[Scheduler] 思考生成失败，准备重试: persona={persona_name}, attempt={attempt + 1}/{max_retries + 1}, delay={retry_delay}s")
+                if retry_delay > 0:
+                    await asyncio.sleep(retry_delay)
+        return last_result
+
+    async def _run_diary_generation_with_retries(
+        self,
+        date_str: str,
+        persona_name: str,
+        reflections: list[str],
+        session_id: str | None,
+        persona_desc: str | None,
+        ensured_schedule: dict[str, Any] | None = None,
+    ) -> str | None:
+        max_retries = self._get_diary_generation_retry_count(persona_name)
+        retry_delay = self._get_diary_generation_retry_delay_seconds(persona_name)
+        last_result = None
+        for attempt in range(max_retries + 1):
+            last_result = await self.diary_generator.generate(
+                date_str,
+                reflections,
+                session_id=session_id,
+                persona_name=persona_name,
+                persona_desc=persona_desc,
+                ensured_schedule=ensured_schedule,
+            )
+            if last_result:
+                if attempt > 0:
+                    logger.info(f"[Scheduler] 日记生成重试成功: persona={persona_name}, date={date_str}, attempt={attempt + 1}")
+                return last_result
+            if attempt < max_retries:
+                logger.warning(f"[Scheduler] 日记生成失败，准备重试: persona={persona_name}, date={date_str}, attempt={attempt + 1}/{max_retries + 1}, delay={retry_delay}s")
+                if retry_delay > 0:
+                    await asyncio.sleep(retry_delay)
+        return last_result
+
     def _get_interval_seconds(self, persona_name: str | None) -> int:
         interval_minutes = float(self._persona_value(persona_name, "thinking_interval_minutes", 30) or 30)
         return max(int(interval_minutes * 60), 1)
@@ -712,7 +790,7 @@ class AwarenessScheduler:
         if jitter_seconds <= 0:
             return base_seconds
 
-        normalized = self._normalize_persona_name(persona_name) or "default"
+        normalized = self._canonical_persona_name(persona_name) or "default"
         if anchor_time is None:
             anchor_time = datetime.datetime.now()
         seed_text = f"{normalized}|{anchor_time.strftime('%Y-%m-%d %H:%M:%S')}|{base_seconds}|{jitter_seconds}"
@@ -744,7 +822,22 @@ class AwarenessScheduler:
             return compact
         return compact[:limit].rstrip() + "……"
 
+    def _get_first_reflection_anchor_time(self, state: dict[str, Any]) -> datetime.datetime:
+        raw = str(state.get("state_created_at") or "").strip()
+        if raw:
+            try:
+                return datetime.datetime.fromisoformat(raw)
+            except Exception:
+                pass
+        now = datetime.datetime.now()
+        state["state_created_at"] = now.isoformat()
+        self._persist_state()
+        return now
+
     def _seconds_until_persona_reflection_due(self, persona_name: str, now: datetime.datetime) -> float | None:
+        persona_name = self._canonical_persona_name(persona_name)
+        if not persona_name:
+            return None
         if not bool(self._persona_value(persona_name, "enable_auto_reflection", True)):
             return None
         if self._is_persona_silent(persona_name):
@@ -759,6 +852,7 @@ class AwarenessScheduler:
             state["last_reflection_cooldown_until"] = None
             state["consecutive_failures"] = 0
             state["last_reflection_failure_time"] = None
+            self._persist_state()
 
         last_failure_time = state.get("last_reflection_failure_time")
         consecutive_failures = self._safe_non_negative_int(state.get("consecutive_failures", 0), default=0)
@@ -769,10 +863,12 @@ class AwarenessScheduler:
                 return max(retry_remaining, 1.0)
 
         last_auto_time = state.get("last_auto_reflection_time")
-        effective_interval_seconds = float(self._get_effective_reflection_interval_seconds(persona_name, last_auto_time or now))
-        if not last_auto_time:
-            return max(effective_interval_seconds, 1.0)
-        elapsed = (now - last_auto_time).total_seconds()
+        if last_auto_time:
+            anchor_time = last_auto_time
+        else:
+            anchor_time = self._get_first_reflection_anchor_time(state)
+        effective_interval_seconds = float(self._get_effective_reflection_interval_seconds(persona_name, anchor_time))
+        elapsed = (now - anchor_time).total_seconds()
         remaining = effective_interval_seconds - elapsed
         if remaining <= 0:
             return 1.0
@@ -783,6 +879,9 @@ class AwarenessScheduler:
         return due_in is not None and due_in <= 1.0
 
     def _seconds_until_persona_diary_trigger(self, persona_name: str, now: datetime.datetime, today_str: str) -> float | None:
+        persona_name = self._canonical_persona_name(persona_name)
+        if not persona_name:
+            return None
         if not bool(self._persona_value(persona_name, "enable_auto_diary", True)):
             return None
         state = self._ensure_persona_state(persona_name)
@@ -805,10 +904,15 @@ class AwarenessScheduler:
                 today_str = now.strftime("%Y-%m-%d")
                 enabled_personas = self._enabled_personas()
 
+                reset_happened = False
                 for persona_name in enabled_personas:
                     state = self._ensure_persona_state(persona_name)
-                    if state.get("last_diary_date") != today_str:
+                    if str(state.get("state_date") or "") != today_str:
                         self._run_today_reset_for_persona(persona_name, today_str)
+                        reset_happened = True
+                if reset_happened:
+                    self._prune_all_diary_memory_version_counters()
+                    self._persist_state()
 
                 current_total_minutes = now.hour * 60 + now.minute
 
@@ -825,6 +929,7 @@ class AwarenessScheduler:
                         if has_reached_target and last_auto_trigger_key != trigger_key:
                             state["last_diary_check_minute"] = current_total_minutes
                             state["last_auto_diary_trigger_key"] = trigger_key
+                            self._persist_state()
                             if self._is_debug_mode():
                                 logger.info(f"[Scheduler][debug] 触发自动日记: persona={persona_name}, now={now.strftime('%H:%M:%S')}, target={diary_hour:02d}:{diary_minute:02d}, trigger_key={trigger_key}, overwrite_today={bool(self._persona_value(persona_name, 'allow_overwrite_today_diary', False))}")
                             result = await self._generate_and_push_diary(today_str, persona_name)
@@ -832,6 +937,7 @@ class AwarenessScheduler:
                             if status not in {"success", "exists"}:
                                 if str(state.get("last_auto_diary_trigger_key") or "") == trigger_key:
                                     state["last_auto_diary_trigger_key"] = ""
+                                    self._persist_state()
                             elif self._is_debug_mode():
                                 logger.info(f"[Scheduler][debug] 自动日记处理完成: persona={persona_name}, trigger_key={trigger_key}, status={status}")
 
@@ -943,36 +1049,44 @@ class AwarenessScheduler:
         state["last_diary_error_time"] = None
 
     async def select_reflection_session(self, persona_name: str) -> str | None:
-        state = self._ensure_persona_state(persona_name)
+        canonical_persona = self._canonical_persona_name(persona_name)
+        if not canonical_persona:
+            return None
+        state = self._ensure_persona_state(canonical_persona)
 
         last_selected_session_id = str(state.get("last_selected_session_id") or "").strip()
-        if last_selected_session_id and self.session_persona_map.get(last_selected_session_id) == persona_name:
+        if last_selected_session_id and self._canonical_persona_name(self.session_persona_map.get(last_selected_session_id)) == canonical_persona:
             state["last_selected_session_id"] = last_selected_session_id
             state["last_selected_session_source"] = "last_selected_session"
+            self._touch_session_persona(last_selected_session_id)
             return last_selected_session_id
 
         recent_session_ids = await self.message_cache.get_recent_session_ids()
         for session_id in recent_session_ids:
-            if self.session_persona_map.get(session_id) == persona_name:
+            if self._canonical_persona_name(self.session_persona_map.get(session_id)) == canonical_persona:
                 state["last_selected_session_id"] = session_id
                 state["last_selected_session_source"] = "recent_message"
+                self._touch_session_persona(session_id)
                 return session_id
         session_ids = await self.message_cache.get_all_session_ids()
         for session_id in session_ids:
-            if self.session_persona_map.get(session_id) == persona_name:
+            if self._canonical_persona_name(self.session_persona_map.get(session_id)) == canonical_persona:
                 state["last_selected_session_id"] = session_id
                 state["last_selected_session_source"] = "message_cache"
+                self._touch_session_persona(session_id)
                 return session_id
         for sid, pname in self.session_persona_map.items():
-            if pname == persona_name:
+            if self._canonical_persona_name(pname) == canonical_persona:
                 state["last_selected_session_id"] = sid
                 state["last_selected_session_source"] = "persona_map_fallback"
+                self._touch_session_persona(sid)
                 return sid
         state["last_selected_session_id"] = None
         state["last_selected_session_source"] = "none"
         return None
 
     def _is_duplicate_reflection(self, persona_name: str, new_text: str) -> bool:
+        persona_name = self._canonical_persona_name(persona_name) or persona_name
         state = self._ensure_persona_state(persona_name)
         if not new_text:
             self._mark_dedupe(persona_name, False)
@@ -1011,6 +1125,7 @@ class AwarenessScheduler:
         return False
 
     def _build_recent_reflections_text(self, persona_name: str) -> str:
+        persona_name = self._canonical_persona_name(persona_name) or persona_name
         reference_count = self._safe_non_negative_int(self._persona_value(persona_name, "reflection_reference_count", 2), default=2)
         if reference_count <= 0:
             return "（不参考最近思考）"
@@ -1020,6 +1135,7 @@ class AwarenessScheduler:
         return "\n".join([f"- {x}" for x in recent])
 
     def _is_persona_silent(self, persona_name: str | None) -> bool:
+        persona_name = self._canonical_persona_name(persona_name)
         enabled = bool(self._persona_value(persona_name, "silent_hours_enabled", self.config.get("silent_hours_enabled", True)))
         start_time = str(self._persona_value(persona_name, "silent_hours_start", self.config.get("silent_hours_start", "00:00")) or "00:00")
         end_time = str(self._persona_value(persona_name, "silent_hours_end", self.config.get("silent_hours_end", "06:00")) or "06:00")
@@ -1027,6 +1143,7 @@ class AwarenessScheduler:
         return checker.is_silent()
 
     def _get_persona_silent_status(self, persona_name: str | None) -> dict:
+        persona_name = self._canonical_persona_name(persona_name)
         enabled = bool(self._persona_value(persona_name, "silent_hours_enabled", self.config.get("silent_hours_enabled", True)))
         start_time = str(self._persona_value(persona_name, "silent_hours_start", self.config.get("silent_hours_start", "00:00")) or "00:00")
         end_time = str(self._persona_value(persona_name, "silent_hours_end", self.config.get("silent_hours_end", "06:00")) or "06:00")
@@ -1034,6 +1151,7 @@ class AwarenessScheduler:
         return checker.get_status()
 
     def _get_persona_diary_time(self, persona_name: str | None) -> tuple[int, int]:
+        persona_name = self._canonical_persona_name(persona_name)
         diary_time_str = str(self._persona_value(persona_name, "diary_time", self.config.get("diary_time", "23:58")) or "23:58")
         try:
             hour, minute = map(int, diary_time_str.split(":"))
@@ -1057,7 +1175,16 @@ class AwarenessScheduler:
         except Exception:
             return default
 
+    def _retention_cutoff_date(self, keep_days: int) -> datetime.date:
+        today = datetime.date.today()
+        if keep_days == -1:
+            return today
+        if keep_days <= 0:
+            return today
+        return today - datetime.timedelta(days=keep_days - 1)
+
     def _trim_today_moods(self, persona_name: str):
+        persona_name = self._canonical_persona_name(persona_name) or persona_name
         max_history = self.mood_manager.get_mood_max_history(persona_name) if self.mood_manager else 24
         state = self._ensure_persona_state(persona_name)
         moods = [self._simplify_mood(x) for x in (state.get("today_moods", []) or []) if self._simplify_mood(x)]
@@ -1065,19 +1192,45 @@ class AwarenessScheduler:
             moods = moods[-max_history:]
         state["today_moods"] = moods
 
+    def _trim_diary_memory_version_counter(self, counter: dict | None, keep_days: int | None = None) -> dict[str, int]:
+        if not isinstance(counter, dict):
+            return {}
+        if keep_days is None:
+            keep_days = self._safe_retention_days(self._config_get("diary_retention_days", -1), default=-1)
+        if keep_days == -1:
+            keep_days = 7
+        cutoff = self._retention_cutoff_date(keep_days)
+        trimmed: dict[str, int] = {}
+        for date_str, version in counter.items():
+            try:
+                parsed_date = datetime.datetime.strptime(str(date_str), "%Y-%m-%d").date()
+            except Exception:
+                continue
+            if parsed_date < cutoff:
+                continue
+            trimmed[str(date_str)] = self._safe_non_negative_int(version, default=0)
+        return trimmed
+
+    def _prune_all_diary_memory_version_counters(self):
+        for persona_name in list(self.persona_states.keys()):
+            state = self._ensure_persona_state(persona_name)
+            state["diary_memory_version_counter"] = self._trim_diary_memory_version_counter(state.get("diary_memory_version_counter"))
+
     async def run_manual_reflection(self, session_id: str, persona_name: str | None, persona_desc: str | None = None) -> dict[str, Any]:
-        persona_name = self._normalize_persona_name(persona_name)
+        persona_name = self._canonical_persona_name(persona_name)
         if not persona_name or not self.is_persona_enabled(persona_name):
             return {"status": "skipped", "message": "当前人格未启用 DayMind"}
-        self.session_persona_map[session_id] = persona_name
+        self._touch_session_persona(session_id, persona_name)
         return await self._do_reflection(persona_name, session_id=session_id, persona_desc=persona_desc, manual=True)
 
     async def _do_reflection(self, persona_name: str, session_id: str | None = None, persona_desc: str | None = None, manual: bool = False) -> dict[str, Any]:
+        persona_name = self._canonical_persona_name(persona_name) or persona_name
         state = self._ensure_persona_state(persona_name)
         try:
             if not self.is_persona_enabled(persona_name):
                 return {"status": "skipped", "message": f"人格未启用: {persona_name}"}
             now = datetime.datetime.now()
+            state["state_date"] = now.strftime("%Y-%m-%d")
             current_time_str = now.strftime("%H:%M")
             selected_session_id = session_id or await self.select_reflection_session(persona_name)
             if not selected_session_id and manual:
@@ -1090,14 +1243,19 @@ class AwarenessScheduler:
             if selected_session_id:
                 persona_ctx = await self.dependency_manager.resolve_persona_context(selected_session_id)
                 resolved_desc = persona_desc or (persona_ctx.get("persona_desc") if persona_ctx else None)
-                self.session_persona_map[selected_session_id] = persona_name
+                self._touch_session_persona(selected_session_id, persona_name)
 
             if self._is_debug_mode():
                 logger.info(
                     f"[Scheduler][debug] 开始执行思考: persona={persona_name}, manual={manual}, session={selected_session_id}, session_source={state.get('last_selected_session_source')}"
                 )
 
-            result = await self.reflection_generator.generate(current_time_str, selected_session_id, self._build_recent_reflections_text(persona_name), persona_name, resolved_desc)
+            result = await self._run_reflection_generation_with_retries(
+                current_time_str=current_time_str,
+                selected_session_id=selected_session_id,
+                persona_name=persona_name,
+                resolved_desc=resolved_desc,
+            )
             if result:
                 if self._is_duplicate_reflection(persona_name, result):
                     state["last_reflection_time"] = now
@@ -1107,6 +1265,7 @@ class AwarenessScheduler:
                     state["last_reflection_cooldown_until"] = None
                     state["consecutive_failures"] = 0
                     self._clear_reflection_error(persona_name)
+                    self._persist_state()
                     logger.info(f"[Scheduler] 思考结果命中去重，跳过更新: persona={persona_name}, mode={state.get('last_dedupe_mode')}, source={state.get('last_dedupe_source')}")
                     return {"status": "duplicate", "text": result}
                 state["current_awareness_text"] = result
@@ -1134,6 +1293,7 @@ class AwarenessScheduler:
                         logger.info(f"[Scheduler] 心情生成完成: persona={persona_name}, mood={(mood_result or {}).get('label')}")
                     except Exception as e:
                         logger.warning(f"[Scheduler] 心情生成失败: {e}")
+                self._persist_state()
                 logger.info(f"[Scheduler] 思考完成: persona={persona_name}, result={result}")
                 return {"status": "success", "text": result, "mood": self.get_current_mood_for_persona(persona_name) if mood_result else None}
 
@@ -1147,10 +1307,12 @@ class AwarenessScheduler:
                 state["last_reflection_cooldown_until"] = now + datetime.timedelta(seconds=cooldown_seconds)
                 state["consecutive_failures"] = 0
                 logger.warning(f"[Scheduler] 达到失败重试上限，进入冷却: persona={persona_name}, cooldown={cooldown_seconds}s")
+            self._persist_state()
             return {"status": "failed", "message": "思考结果为空，请检查模型提供商配置"}
         except Exception as e:
             logger.error(f"[Scheduler] 思考过程出错: {e}", exc_info=True)
             now = datetime.datetime.now()
+            state["state_date"] = now.strftime("%Y-%m-%d")
             state["consecutive_failures"] = self._safe_non_negative_int(state.get("consecutive_failures", 0), default=0) + 1
             state["last_reflection_failure_time"] = now
             self._record_reflection_error(persona_name, "reflection_exception", str(e))
@@ -1160,54 +1322,101 @@ class AwarenessScheduler:
                 state["last_reflection_cooldown_until"] = now + datetime.timedelta(seconds=cooldown_seconds)
                 state["consecutive_failures"] = 0
                 logger.warning(f"[Scheduler] 达到失败重试上限，进入冷却: persona={persona_name}, cooldown={cooldown_seconds}s")
+            self._persist_state()
             return {"status": "failed", "message": str(e)}
 
     async def run_manual_diary(self, session_id: str, persona_name: str | None, persona_desc: str | None = None) -> dict[str, Any]:
-        persona_name = self._normalize_persona_name(persona_name)
+        persona_name = self._canonical_persona_name(persona_name)
         if not persona_name or not self.is_persona_enabled(persona_name):
             return {"status": "skipped", "message": "当前人格未启用 DayMind"}
-        self.session_persona_map[session_id] = persona_name
+        self._touch_session_persona(session_id, persona_name)
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
         state = self._ensure_persona_state(persona_name)
+        schedule_result = await self.dependency_manager.ensure_today_schedule(
+            session_id=session_id,
+            persona_name=persona_name,
+            persona_desc=persona_desc,
+            debug=self._is_debug_mode(),
+        )
+        if schedule_result.get("status") == "failed":
+            return {
+                "status": "failed_schedule",
+                "message": schedule_result.get("message") or "今日日程不可用",
+                "schedule_data": schedule_result.get("data") or {},
+                "schedule_generated_now": False,
+            }
         if state.get("diary_generated_today") and not bool(self._persona_value(persona_name, "allow_overwrite_today_diary", False)):
-            return {"status": "exists"}
-        return await self._generate_and_push_diary(today_str, persona_name, primary_target=session_id, persona_desc=persona_desc, manual=True)
+            return {
+                "status": "exists",
+                "schedule_data": schedule_result.get("data") or {},
+                "schedule_generated_now": bool(schedule_result.get("generated_now")),
+            }
+        return await self._generate_and_push_diary(today_str, persona_name, primary_target=session_id, persona_desc=persona_desc, manual=True, ensured_schedule=schedule_result)
 
-    async def _generate_and_push_diary(self, date_str: str, persona_name: str, primary_target: str | None = None, persona_desc: str | None = None, manual: bool = False) -> dict[str, Any]:
+    async def _generate_and_push_diary(self, date_str: str, persona_name: str, primary_target: str | None = None, persona_desc: str | None = None, manual: bool = False, ensured_schedule: dict[str, Any] | None = None) -> dict[str, Any]:
+        persona_name = self._canonical_persona_name(persona_name) or persona_name
         memory_status = "skipped"
         state = self._ensure_persona_state(persona_name)
         try:
+            state["state_date"] = date_str
             if state.get("diary_generated_today") and not bool(self._persona_value(persona_name, "allow_overwrite_today_diary", False)):
                 logger.info(f"[Scheduler] 跳过日记生成：{date_str} persona={persona_name} 今日日记已生成")
+                self._persist_state()
                 return {"status": "exists"}
             target = primary_target or await self.select_reflection_session(persona_name)
             primary_persona_desc = persona_desc
+            persona_ctx = None
+            resolved_persona_id = None
             if target:
                 persona_ctx = await self.dependency_manager.resolve_persona_context(target)
                 if persona_ctx and not primary_persona_desc:
                     primary_persona_desc = persona_ctx.get("persona_desc")
-                self.session_persona_map[target] = persona_name
-            diary_content = await self.diary_generator.generate(date_str, list(state.get("today_reflections", []) or []), session_id=target, persona_name=persona_name, persona_desc=primary_persona_desc)
+                resolved_persona_id = persona_ctx.get("persona_id") if persona_ctx else None
+                self._touch_session_persona(target, persona_name)
+            diary_content = await self._run_diary_generation_with_retries(
+                date_str=date_str,
+                persona_name=persona_name,
+                reflections=list(state.get("today_reflections", []) or []),
+                session_id=target,
+                persona_desc=primary_persona_desc,
+                ensured_schedule=ensured_schedule,
+            )
             if not diary_content:
                 self._record_diary_error(persona_name, "diary_empty", "日记生成结果为空，请检查模型提供商配置")
                 await self._save_diary_meta(date_str, persona_name, memory_status="failed")
+                self._persist_state()
                 return {"status": "failed", "message": "日记生成结果为空，请检查模型提供商配置"}
             overwrite = bool(self._persona_value(persona_name, "allow_overwrite_today_diary", False))
             regeneration_info = {"matched": 0, "updated": 0, "ids": []}
-            if overwrite and bool(self._persona_value(persona_name, "store_diary_to_memory", True)) and self.dependency_manager.has_livingmemory and target:
-                regeneration_info = await self.dependency_manager.mark_daymind_diary_memories_deleted(date_str=date_str, session_id=target)
+            if overwrite and bool(self._persona_value(persona_name, "store_diary_to_memory", True)) and self.dependency_manager.has_livingmemory:
+                regeneration_info = await self.dependency_manager.mark_daymind_diary_memories_deleted(
+                    date_str=date_str,
+                    session_id=target,
+                    persona_id=resolved_persona_id,
+                    persona_name=persona_name,
+                )
             local_saved = await self._save_diary_local(date_str, persona_name, diary_content)
             if not local_saved:
                 await self._save_diary_meta(date_str, persona_name, memory_status="failed")
+                self._persist_state()
                 return {"status": "failed", "message": "日记保存到本地失败"}
             if bool(self._persona_value(persona_name, "store_diary_to_memory", True)) and self.dependency_manager.has_livingmemory:
                 memory_metadata = self._build_diary_memory_metadata(date_str, persona_name)
                 memory_metadata["replaces_memory_ids"] = regeneration_info.get("ids", [])
-                stored = await self.dependency_manager.store_to_memory(date_str=date_str, content=diary_content, session_id=target, persona_id=persona_name, metadata=memory_metadata)
+                memory_metadata["persona_name"] = persona_name
+                memory_metadata["diary_identity"] = f"daymind:{persona_name}:{date_str}"
+                stored = await self.dependency_manager.store_to_memory(
+                    date_str=date_str,
+                    content=diary_content,
+                    session_id=target,
+                    persona_id=resolved_persona_id,
+                    metadata=memory_metadata,
+                )
                 if not stored:
                     memory_status = "failed"
                     self._record_diary_error(persona_name, "memory_store_failed", "日记写入记忆系统失败")
                     await self._save_diary_meta(date_str, persona_name, memory_status=memory_status)
+                    self._persist_state()
                     return {"status": "failed", "message": "日记写入记忆系统失败"}
                 memory_status = "stored"
             else:
@@ -1219,34 +1428,38 @@ class AwarenessScheduler:
             state["diary_generated_today"] = True
             state["last_diary_date"] = date_str
             self._clear_diary_error(persona_name)
-            return {"status": "success", "content": diary_content, "marked_deleted": int(regeneration_info.get('updated', 0) or 0)}
+            self._persist_state()
+            return {"status": "success", "content": diary_content, "marked_deleted": int(regeneration_info.get('updated', 0) or 0), "schedule_data": (ensured_schedule or {}).get("data") or {}, "schedule_generated_now": bool((ensured_schedule or {}).get("generated_now"))}
         except Exception as e:
             logger.error(f"[Scheduler] 日记生成流程出错: {e}", exc_info=True)
             self._record_diary_error(persona_name, "diary_exception", str(e))
             await self._save_diary_meta(date_str, persona_name, memory_status="failed")
+            self._persist_state()
             return {"status": "failed", "message": str(e)}
 
     def _build_diary_memory_metadata(self, date_str: str, persona_name: str) -> dict:
+        persona_name = self._canonical_persona_name(persona_name) or persona_name
         state = self._ensure_persona_state(persona_name)
         overwrite = bool(self._persona_value(persona_name, "allow_overwrite_today_diary", False))
-        counter = dict(state.get("diary_memory_version_counter", {}) or {})
+        counter = self._trim_diary_memory_version_counter(state.get("diary_memory_version_counter"))
         version = int(counter.get(date_str, 0) or 0) + 1
         counter[date_str] = version
         state["diary_memory_version_counter"] = counter
         return {"type": "diary", "source": "daymind", "date": date_str, "persona_name": persona_name, "version": version, "is_regenerated": overwrite and version > 1, "overwrite_of_date": date_str if overwrite and version > 1 else "", "status": "active"}
 
     def _get_primary_persona_id(self, persona_name: str | None) -> str | None:
-        return self._normalize_persona_name(persona_name)
+        return self._canonical_persona_name(persona_name)
 
     async def _save_diary_local(self, date_str: str, persona_name: str, content: str) -> bool:
         try:
-            diary_file = self._diary_text_path(date_str, persona_name)
+            canonical_persona = self._canonical_persona_name(persona_name) or persona_name
+            diary_file = self._diary_text_path(date_str, canonical_persona)
             diary_file.parent.mkdir(parents=True, exist_ok=True)
             with open(diary_file, 'w', encoding='utf-8') as f:
                 f.write(content)
-            if not self._diary_meta_path(date_str, persona_name).exists():
-                self._save_diary_meta_sync(date_str, persona_name, self._build_default_diary_meta(date_str, persona_name))
-            logger.info(f"[Scheduler] 日记已保存到本地: persona={persona_name}, path={diary_file}")
+            if not self._diary_meta_path(date_str, canonical_persona).exists():
+                self._save_diary_meta_sync(date_str, canonical_persona, self._build_default_diary_meta(date_str, canonical_persona))
+            logger.info(f"[Scheduler] 日记已保存到本地: persona={canonical_persona}, path={diary_file}")
             return True
         except Exception as e:
             logger.error(f"[Scheduler] 保存日记到本地失败: {e}")
@@ -1255,20 +1468,22 @@ class AwarenessScheduler:
 
     async def _save_diary_meta(self, date_str: str, persona_name: str, memory_status: str = "unknown"):
         try:
-            current = self._load_diary_meta(date_str, persona_name)
+            canonical_persona = self._canonical_persona_name(persona_name) or persona_name
+            current = self._load_diary_meta(date_str, canonical_persona)
             current["memory_status"] = memory_status
-            self._save_diary_meta_sync(date_str, persona_name, current)
+            self._save_diary_meta_sync(date_str, canonical_persona, current)
         except Exception as e:
             logger.debug(f"[Scheduler] 保存日记元信息失败: {e}")
 
     async def _append_reflection_history(self, date_str: str, persona_name: str, content: str):
         try:
-            history_dir = self._reflections_dir(persona_name)
+            canonical_persona = self._canonical_persona_name(persona_name) or persona_name
+            history_dir = self._reflections_dir(canonical_persona)
             history_dir.mkdir(parents=True, exist_ok=True)
-            items = self._load_reflection_day_rows(date_str, persona_name)
-            day_meta = self._extract_reflection_day_meta(date_str, persona_name, items)
-            items.append({"time": datetime.datetime.now().strftime("%H:%M:%S"), "content": content, "created_at": datetime.datetime.now().isoformat(), "persona_name": persona_name})
-            self._save_reflection_day_rows_with_meta(date_str, persona_name, items, day_meta)
+            items = self._load_reflection_day_rows(date_str, canonical_persona)
+            day_meta = self._extract_reflection_day_meta(date_str, canonical_persona, items)
+            items.append({"time": datetime.datetime.now().strftime("%H:%M:%S"), "content": content, "created_at": datetime.datetime.now().isoformat(), "persona_name": canonical_persona})
+            self._save_reflection_day_rows_with_meta(date_str, canonical_persona, items, day_meta)
         except Exception as e:
             logger.debug(f"[Scheduler] 保存思考流失败: {e}")
 
@@ -1280,7 +1495,7 @@ class AwarenessScheduler:
             root = self._reflections_dir()
             if not root.exists():
                 return
-            cutoff = datetime.date.today() - datetime.timedelta(days=keep_days - 1) if keep_days > 0 else datetime.date.today() + datetime.timedelta(days=1)
+            cutoff = self._retention_cutoff_date(keep_days)
             for persona_name, persona_dir in self._scan_persona_dirs(root):
                 for fp in persona_dir.glob("*.json"):
                     try:
@@ -1304,7 +1519,7 @@ class AwarenessScheduler:
             root = self._diaries_dir()
             if not root.exists():
                 return
-            cutoff = datetime.date.today() - datetime.timedelta(days=keep_days - 1) if keep_days > 0 else datetime.date.today() + datetime.timedelta(days=1)
+            cutoff = self._retention_cutoff_date(keep_days)
             for persona_name, persona_dir in self._scan_persona_dirs(root):
                 for txt_fp in persona_dir.glob("*.txt"):
                     date_str = txt_fp.stem
@@ -1328,51 +1543,41 @@ class AwarenessScheduler:
             logger.debug("[Scheduler] 未配置推送目标")
             return
         for target in targets:
-            max_retries = int(self._persona_value(persona_name, "push_retry_times", 3))
-            retry_delay = float(self._persona_value(persona_name, "push_retry_delay_seconds", 2))
-            success = False
-            last_error = None
-            for attempt in range(1, max_retries + 1):
-                try:
-                    await self._send_message_to_target(target, content)
-                    success = True
-                    break
-                except Exception as e:
-                    last_error = e
-                    logger.warning(f"[Scheduler] 推送失败，第{attempt}/{max_retries}次: target={target}, error={e}")
-                    if attempt < max_retries:
-                        await asyncio.sleep(retry_delay)
-            if not success:
-                self._record_diary_error(persona_name or "未命名人格", "push_failed", f"target={target}, error={last_error}")
-                logger.error(f"[Scheduler] 推送日记到 {target} 最终失败: {last_error}", exc_info=True)
+            try:
+                await self._send_message_to_target(target, content)
+            except Exception as e:
+                self._record_diary_error(persona_name or "未命名人格", "push_failed", f"target={target}, error={e}")
+                self._persist_state()
+                logger.error(f"[Scheduler] 推送日记到 {target} 失败: {e}", exc_info=True)
 
     async def _send_message_to_target(self, target: str, content: str):
-        parts = target.split(":")
-        if len(parts) != 3:
-            raise ValueError(f"无效的推送目标格式: {target}")
-        message_chain = MessageChain().message(content)
-        await self.context.send_message(target, message_chain)
+        await self.context.send_message(target, content)
         logger.info(f"[Scheduler] 日记已推送到: {target}")
 
     def get_status(self, persona_name: str | None = None) -> dict:
-        silent_status = self._get_persona_silent_status(persona_name)
-        reference_count = self._safe_non_negative_int(self._persona_value(persona_name, "reflection_reference_count", 2), default=2)
+        canonical_persona = self._canonical_persona_name(persona_name)
+        silent_status = self._get_persona_silent_status(canonical_persona)
+        reference_count = self._safe_non_negative_int(self._persona_value(canonical_persona, "reflection_reference_count", 2), default=2)
         runtime_config = self.get_runtime_config()
-        normalized = self._normalize_persona_name(persona_name)
-        state = self._ensure_persona_state(normalized) if normalized and self.is_persona_enabled(normalized) else None
+        state = self._ensure_persona_state(canonical_persona) if canonical_persona and self.is_persona_enabled(canonical_persona) else None
         current_mood = None
         previous_mood = None
         today_moods_count = 0
+        diary_memory_version = 0
         if state:
-            current_mood = self.get_current_mood_for_persona(normalized)
-            previous_mood = self.get_previous_mood_for_persona(normalized)
+            current_mood = self.get_current_mood_for_persona(canonical_persona)
+            previous_mood = self.get_previous_mood_for_persona(canonical_persona)
             today_moods_count = len(state.get("today_moods", []) or [])
+            date_key = datetime.datetime.now().strftime("%Y-%m-%d")
+            diary_memory_version = self._safe_non_negative_int((state.get("diary_memory_version_counter") or {}).get(date_key, 0), default=0)
         return {
             "is_running": self.is_running,
-            "enable_auto_reflection": bool(self._persona_value(persona_name, "enable_auto_reflection", True)),
-            "enable_auto_diary": bool(self._persona_value(persona_name, "enable_auto_diary", True)),
+            "enable_auto_reflection": bool(self._persona_value(canonical_persona, "enable_auto_reflection", True)),
+            "enable_auto_diary": bool(self._persona_value(canonical_persona, "enable_auto_diary", True)),
             "enabled_personas": self._enabled_personas(),
             "reflection_reference_count": reference_count,
+            "state_date": state.get("state_date") if state else "",
+            "state_created_at": state.get("state_created_at") if state else "",
             "current_awareness_text": state.get("current_awareness_text") if state else "",
             "today_reflections_count": len(state.get("today_reflections", [])) if state else 0,
             "last_reflection_time": state.get("last_reflection_time").strftime("%H:%M") if state and state.get("last_reflection_time") else None,
@@ -1380,20 +1585,24 @@ class AwarenessScheduler:
             "last_reflection_failure_time": state.get("last_reflection_failure_time").strftime("%H:%M:%S") if state and state.get("last_reflection_failure_time") else None,
             "last_reflection_cooldown_until": state.get("last_reflection_cooldown_until").strftime("%H:%M:%S") if state and state.get("last_reflection_cooldown_until") else None,
             "consecutive_failures": self._safe_non_negative_int(state.get("consecutive_failures", 0), default=0) if state else 0,
-            "reflection_failure_retry_limit": self._get_reflection_failure_retry_limit(persona_name),
-            "reflection_failure_retry_delay_seconds": self._get_reflection_failure_retry_delay_seconds(persona_name),
+            "reflection_failure_retry_limit": self._get_reflection_failure_retry_limit(canonical_persona),
+            "reflection_failure_retry_delay_seconds": self._get_reflection_failure_retry_delay_seconds(canonical_persona),
+            "reflection_generation_retry_count": self._get_reflection_generation_retry_count(canonical_persona),
+            "reflection_generation_retry_delay_seconds": self._get_reflection_generation_retry_delay_seconds(canonical_persona),
+            "diary_generation_retry_count": self._get_diary_generation_retry_count(canonical_persona),
+            "diary_generation_retry_delay_seconds": self._get_diary_generation_retry_delay_seconds(canonical_persona),
             "silent_hours": silent_status,
             "diary_generated_today": bool(state.get("diary_generated_today", False)) if state else False,
             "last_diary_date": state.get("last_diary_date") if state else "",
             "last_auto_diary_trigger_key": state.get("last_auto_diary_trigger_key", "") if state else "",
             "primary_memory_target": state.get("last_selected_session_id") if state else None,
-            "primary_persona_id": self._get_primary_persona_id(normalized),
-            "allow_overwrite_today_diary": bool(self._persona_value(persona_name, "allow_overwrite_today_diary", False)),
+            "primary_persona_id": self._get_primary_persona_id(canonical_persona),
+            "allow_overwrite_today_diary": bool(self._persona_value(canonical_persona, "allow_overwrite_today_diary", False)),
             "recent_reflections_preview": (state.get("today_reflections", [])[-max(reference_count, 2):] if state else []),
-            "next_reflection_in_minutes": self._persona_value(persona_name, "thinking_interval_minutes", 30),
-            "thinking_interval_jitter_seconds": self._safe_non_negative_int(self._persona_value(persona_name, "thinking_interval_jitter_seconds", 0), 0),
-            "reflection_dedupe_mode": self._persona_value(persona_name, "reflection_dedupe_mode", "普通") or "普通",
-            "reflection_dedupe_similarity_threshold": self._get_similarity_threshold_for_persona(persona_name),
+            "next_reflection_in_minutes": self._persona_value(canonical_persona, "thinking_interval_minutes", 30),
+            "thinking_interval_jitter_seconds": self._safe_non_negative_int(self._persona_value(canonical_persona, "thinking_interval_jitter_seconds", 0), 0),
+            "reflection_dedupe_mode": self._persona_value(canonical_persona, "reflection_dedupe_mode", "普通") or "普通",
+            "reflection_dedupe_similarity_threshold": self._get_similarity_threshold_for_persona(canonical_persona),
             "last_reflection_error_code": state.get("last_reflection_error_code") if state else None,
             "last_reflection_error_message": state.get("last_reflection_error_message") if state else None,
             "last_reflection_error_time": state.get("last_reflection_error_time") if state else None,
@@ -1405,14 +1614,14 @@ class AwarenessScheduler:
             "last_dedupe_source": state.get("last_dedupe_source") if state else None,
             "last_selected_session_id": state.get("last_selected_session_id") if state else None,
             "last_selected_session_source": state.get("last_selected_session_source", "none") if state else "none",
-            "diary_memory_version": 0,
+            "diary_memory_version": diary_memory_version,
             "reflection_retention_days": runtime_config["reflection_retention_days"],
             "diary_retention_days": runtime_config["diary_retention_days"],
             "webui_default_window_days": runtime_config["webui_default_window_days"],
             "webui_default_theme": runtime_config["webui_default_theme"],
             "webui_default_mode": runtime_config["webui_default_mode"],
-            "enable_mood_system": self.mood_manager.is_mood_enabled(persona_name) if self.mood_manager else bool(self._persona_value(persona_name, "enable_mood_system", True)),
-            "inject_mood_into_reply": self.mood_manager.is_inject_mood_into_reply(persona_name) if self.mood_manager else bool(self._persona_value(persona_name, "inject_mood_into_reply", True)),
+            "enable_mood_system": self.mood_manager.is_mood_enabled(canonical_persona) if self.mood_manager else bool(self._persona_value(canonical_persona, "enable_mood_system", True)),
+            "inject_mood_into_reply": self.mood_manager.is_inject_mood_into_reply(canonical_persona) if self.mood_manager else bool(self._persona_value(canonical_persona, "inject_mood_into_reply", True)),
             "current_mood": current_mood,
             "previous_mood": previous_mood,
             "today_moods_count": today_moods_count,

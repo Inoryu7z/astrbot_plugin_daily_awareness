@@ -8,6 +8,7 @@ from .message_cache import MessageCache
 from .silent_hours import SilentHoursChecker
 from .webui import DayMindWebUI
 from .mood import MoodManager
+from .persona_utils import PersonaConfigMixin
 
 __all__ = [
     "AwarenessScheduler",
@@ -18,4 +19,5 @@ __all__ = [
     "SilentHoursChecker",
     "DayMindWebUI",
     "MoodManager",
+    "PersonaConfigMixin",
 ]

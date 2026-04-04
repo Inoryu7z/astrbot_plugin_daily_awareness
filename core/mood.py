@@ -4,8 +4,10 @@
 """
 import datetime
 import json
-from typing import Optional, Any
+from typing import Optional
 from astrbot.api import logger
+
+from .persona_utils import PersonaConfigMixin
 
 # 心情主标签（V2：10主标签）
 MOOD_LABELS = [
@@ -144,41 +146,13 @@ DEFAULT_MOOD = {
 }
 
 
-class MoodManager:
+class MoodManager(PersonaConfigMixin):
     """心情管理器"""
 
     def __init__(self, context, config: dict, dependency_manager):
         self.context = context
         self.config = config
         self.dependency_manager = dependency_manager
-
-    def _normalize_persona_name(self, persona_name: str | None) -> str | None:
-        if persona_name is None:
-            return None
-        value = str(persona_name).strip()
-        return value or None
-
-    def _persona_entries(self) -> list[dict[str, Any]]:
-        raw = self.config.get("personas", [])
-        if not isinstance(raw, list):
-            return []
-        return [item for item in raw if isinstance(item, dict)]
-
-    def _find_persona_config(self, persona_name: str | None) -> dict[str, Any] | None:
-        normalized = self._normalize_persona_name(persona_name)
-        if not normalized:
-            return None
-        for item in self._persona_entries():
-            candidate = self._normalize_persona_name(item.get("persona_name"))
-            if candidate == normalized:
-                return item
-        return None
-
-    def _persona_value(self, persona_name: str | None, key: str, default=None):
-        item = self._find_persona_config(persona_name)
-        if item is not None and key in item and item.get(key) is not None:
-            return item.get(key)
-        return self.config.get(key, default)
 
     def is_mood_enabled(self, persona_name: str | None = None) -> bool:
         return bool(self._persona_value(persona_name, "enable_mood_system", True))
@@ -267,6 +241,7 @@ class MoodManager:
         return total
 
     async def generate_mood(self, reflection_text: str, persona_name: str | None = None) -> dict:
+        persona_name = self._canonical_persona_name(persona_name)
         if not self.is_mood_enabled(persona_name):
             return self._build_default_mood()
 
@@ -276,7 +251,7 @@ class MoodManager:
         return await self._extract_from_reflection(reflection_text)
 
     async def _generate_with_provider(self, reflection_text: str, persona_name: str | None = None) -> dict:
-        """使用独立提供商生成心情。严格限制：只传当前思考内容。"""
+        """使用独立提供商生成心情。严格只传当前思考内容。"""
         provider_id = self.get_mood_provider_id(persona_name)
         if not provider_id:
             return self._build_default_mood()
@@ -525,6 +500,7 @@ class MoodManager:
         )
 
     def get_mood_style_text(self, mood: dict, previous_mood: Optional[dict] = None, persona_name: str | None = None) -> str:
+        persona_name = self._canonical_persona_name(persona_name)
         if not self.is_inject_mood_into_reply(persona_name):
             return ""
 
