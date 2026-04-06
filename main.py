@@ -4,6 +4,8 @@ astrbot_plugin_daymind - 心智手记
 
 import json
 import datetime
+import asyncio
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +43,8 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         self.config = config or {}
         self.data_dir = str(StarTools.get_data_dir())
         self.state_file = Path(self.data_dir) / "awareness_state.json"
+        self._state_write_lock = threading.Lock()
+        self._state_save_pending = False
 
         self.dependency_manager = DependencyManager(context)
         self.message_cache = MessageCache(max_rounds=10)
@@ -122,6 +126,14 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         if self.scheduler is not None:
             self.scheduler.session_persona_map = self.session_persona_map
             self.scheduler.session_persona_activity_map = self.session_persona_activity_map
+
+    def _get_message_cache_state_for_persist(self) -> dict:
+        allowed_session_ids = list(self.session_persona_map.keys())
+        max_sessions = self._get_session_persona_max_entries()
+        return self.message_cache.get_state(
+            allowed_session_ids=allowed_session_ids,
+            max_sessions=max_sessions,
+        )
 
     def _touch_session_persona(self, session_id: str | None, persona_name: str | None = None, persist: bool = False):
         session_key = str(session_id or "").strip()
@@ -244,24 +256,35 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         except Exception as e:
             logger.warning(f"[DayMind] 加载状态失败: {e}")
 
+    def _build_persist_payload(self) -> dict:
+        self._prune_session_persona_state()
+        runtime_config = self.scheduler.get_runtime_config() if self.scheduler else {}
+        return {
+            "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+            "message_cache": self._get_message_cache_state_for_persist(),
+            "last_update": datetime.datetime.now().isoformat(),
+            "session_persona_map": dict(self.session_persona_map),
+            "session_persona_activity_map": dict(self.session_persona_activity_map),
+            "runtime_config": runtime_config,
+            "persona_states": self.scheduler.export_persona_states() if self.scheduler else {},
+        }
+
     def _save_state(self):
+        if self._state_save_pending:
+            return
+        self._state_save_pending = True
         try:
-            self._prune_session_persona_state()
             Path(self.data_dir).mkdir(parents=True, exist_ok=True)
-            runtime_config = self.scheduler.get_runtime_config() if self.scheduler else {}
-            data = {
-                "date": datetime.datetime.now().strftime("%Y-%m-%d"),
-                "message_cache": self.message_cache.get_state(),
-                "last_update": datetime.datetime.now().isoformat(),
-                "session_persona_map": self.session_persona_map,
-                "session_persona_activity_map": self.session_persona_activity_map,
-                "runtime_config": runtime_config,
-                "persona_states": self.scheduler.export_persona_states() if self.scheduler else {},
-            }
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            data = self._build_persist_payload()
+            tmp_path = self.state_file.with_suffix(".tmp")
+            with self._state_write_lock:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                tmp_path.replace(self.state_file)
         except Exception as e:
             logger.error(f"[DayMind] 保存状态失败: {e}")
+        finally:
+            self._state_save_pending = False
 
     def save_runtime_state(self):
         self._save_state()
@@ -369,6 +392,8 @@ class DayMindPlugin(Star, PersonaConfigMixin):
             logger.debug(f"[DayMind] on_llm_request 处理失败: {e}")
 
         if self.scheduler:
+            if getattr(req, "system_prompt", None) is None:
+                req.system_prompt = ""
             current_text = await self.scheduler.get_current_awareness_for_session(event.unified_msg_origin)
             if current_text:
                 req.system_prompt += f"\n\n### 本日状态（截止到目前）\n{current_text}"
@@ -402,6 +427,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         except Exception as e:
             logger.debug(f"[DayMind] on_llm_response 处理失败: {e}")
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("daymind_status")
     async def daymind_status(self, event: AstrMessageEvent):
         if not self.scheduler:

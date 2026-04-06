@@ -43,15 +43,18 @@ class MessageCache:
     ):
         """添加消息到缓存"""
         async with self._lock:
-            if session_id not in self._cache:
-                self._cache[session_id] = deque(maxlen=self.max_rounds * 2)
+            session_key = str(session_id or "").strip()
+            if not session_key:
+                return
+            if session_key not in self._cache:
+                self._cache[session_key] = deque(maxlen=self.max_rounds * 2)
 
-            self._cache[session_id].append(
+            self._cache[session_key].append(
                 CachedMessage(
-                    role=role,
-                    content=content,
+                    role=str(role or "assistant").strip() or "assistant",
+                    content=str(content or "").strip(),
                     timestamp=time.time(),
-                    session_id=session_id,
+                    session_id=session_key,
                     sender_id=str(sender_id).strip() if sender_id else None,
                     sender_name=str(sender_name).strip() if sender_name else None,
                     group_id=str(group_id).strip() if group_id else None,
@@ -59,16 +62,17 @@ class MessageCache:
             )
 
             logger.debug(
-                f"[MessageCache] 添加消息: session={session_id}, role={role}, sender_id={sender_id}, sender_name={sender_name}"
+                f"[MessageCache] 添加消息: session={session_key}, role={role}, sender_id={sender_id}, sender_name={sender_name}"
             )
 
     async def get_recent_messages(self, session_id: str, rounds: int = 2) -> list[str]:
         """获取最近的对话消息"""
         async with self._lock:
-            if session_id not in self._cache:
+            session_key = str(session_id or "").strip()
+            if session_key not in self._cache:
                 return []
 
-            messages = list(self._cache[session_id])
+            messages = list(self._cache[session_key])
             recent = messages[-(rounds * 2):] if rounds > 0 else []
 
             formatted = []
@@ -84,7 +88,8 @@ class MessageCache:
     async def get_latest_counterpart(self, session_id: str) -> dict:
         """获取当前会话最近的互动对象信息"""
         async with self._lock:
-            if session_id not in self._cache:
+            session_key = str(session_id or "").strip()
+            if session_key not in self._cache:
                 return {
                     "sender_id": None,
                     "sender_name": None,
@@ -92,7 +97,7 @@ class MessageCache:
                     "display_name": None,
                 }
 
-            messages = list(self._cache[session_id])
+            messages = list(self._cache[session_key])
             for msg in reversed(messages):
                 if msg.role != "user":
                     continue
@@ -144,39 +149,84 @@ class MessageCache:
             return f"{display}(ID:{msg.sender_id})"
         return display
 
-    def get_state(self) -> dict:
-        """获取当前状态（用于持久化）"""
-        state = {}
+    def get_state(self, allowed_session_ids: list[str] | set[str] | tuple[str, ...] | None = None, max_sessions: int | None = None) -> dict:
+        """获取当前状态（用于持久化）。支持按会话过滤并限制数量。"""
+        allowed = None
+        if allowed_session_ids is not None:
+            allowed = {str(x).strip() for x in allowed_session_ids if str(x).strip()}
+
+        pairs: list[tuple[str, float, deque]] = []
         for session_id, messages in self._cache.items():
-            state[session_id] = [
+            session_key = str(session_id or "").strip()
+            if not session_key or not messages:
+                continue
+            if allowed is not None and session_key not in allowed:
+                continue
+            pairs.append((session_key, messages[-1].timestamp, messages))
+
+        pairs.sort(key=lambda x: x[1], reverse=True)
+        if max_sessions is not None and max_sessions > 0:
+            pairs = pairs[:max_sessions]
+
+        state = {}
+        for session_key, _, messages in pairs:
+            state[session_key] = [
                 {
-                    "role": msg.role,
-                    "content": msg.content,
-                    "timestamp": msg.timestamp,
+                    "role": str(msg.role or "assistant"),
+                    "content": str(msg.content or ""),
+                    "timestamp": float(msg.timestamp or time.time()),
                     "session_id": msg.session_id,
                     "sender_id": msg.sender_id,
                     "sender_name": msg.sender_name,
                     "group_id": msg.group_id,
                 }
                 for msg in messages
+                if str(getattr(msg, "content", "") or "").strip()
             ]
         return state
 
     def restore_state(self, state: dict):
         """从状态数据恢复"""
         self._cache.clear()
+        if not isinstance(state, dict):
+            logger.warning("[MessageCache] 恢复状态失败：state 不是 dict")
+            return
+
+        restored_sessions = 0
+        skipped_messages = 0
         for session_id, messages in state.items():
-            self._cache[session_id] = deque(maxlen=self.max_rounds * 2)
+            session_key = str(session_id or "").strip()
+            if not session_key or not isinstance(messages, list):
+                continue
+            queue = deque(maxlen=self.max_rounds * 2)
             for msg_data in messages:
-                self._cache[session_id].append(
+                if not isinstance(msg_data, dict):
+                    skipped_messages += 1
+                    continue
+                role = str(msg_data.get("role") or "assistant").strip() or "assistant"
+                if role not in {"user", "assistant"}:
+                    role = "assistant"
+                content = str(msg_data.get("content") or "").strip()
+                if not content:
+                    skipped_messages += 1
+                    continue
+                try:
+                    timestamp = float(msg_data.get("timestamp", time.time()) or time.time())
+                except Exception:
+                    timestamp = time.time()
+                queue.append(
                     CachedMessage(
-                        role=msg_data["role"],
-                        content=msg_data["content"],
-                        timestamp=msg_data.get("timestamp", time.time()),
-                        session_id=msg_data.get("session_id"),
-                        sender_id=msg_data.get("sender_id"),
-                        sender_name=msg_data.get("sender_name"),
-                        group_id=msg_data.get("group_id"),
+                        role=role,
+                        content=content,
+                        timestamp=timestamp,
+                        session_id=str(msg_data.get("session_id") or session_key).strip() or session_key,
+                        sender_id=str(msg_data.get("sender_id")).strip() if msg_data.get("sender_id") else None,
+                        sender_name=str(msg_data.get("sender_name")).strip() if msg_data.get("sender_name") else None,
+                        group_id=str(msg_data.get("group_id")).strip() if msg_data.get("group_id") else None,
                     )
                 )
-        logger.info(f"[MessageCache] 恢复了 {len(self._cache)} 个会话的缓存")
+            if queue:
+                self._cache[session_key] = queue
+                restored_sessions += 1
+
+        logger.info(f"[MessageCache] 恢复了 {restored_sessions} 个会话的缓存，跳过坏消息 {skipped_messages} 条")

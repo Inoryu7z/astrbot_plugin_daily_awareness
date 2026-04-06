@@ -17,6 +17,12 @@
     "default": 8899,
     "hint": "DayMind WebUI 使用的端口，默认 8899。"
   },
+  "webui_password": {
+    "description": "WebUI 访问密码",
+    "type": "string",
+    "default": "daymind",
+    "hint": "DayMind WebUI 的访问密码。默认密码为 daymind，建议尽快修改；前端登录后会通过请求头携带该密码访问接口。"
+  },
   "debug_mode": {
     "description": "调试模式",
     "type": "bool",
@@ -113,7 +119,7 @@
             "type": "int",
             "description": "思考生成重试次数",
             "default": 2,
-            "hint": "单次思考生成流程内，LLM 空结果或失败时额外重试几次。填 0 表示只尝试 1 次。"
+            "hint": "单次思考生成流程内，LLM 空结果或失败时额外重试几次。填 0 表示不重试，填 1 表示额外重试 1 次。"
           },
           "reflection_generation_retry_delay_seconds": {
             "type": "float",

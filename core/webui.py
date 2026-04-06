@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -40,6 +40,7 @@ class DayMindWebUI:
 
         self.host = str(self.config.get("webui_host", "127.0.0.1"))
         self.port = int(self.config.get("webui_port", 8899))
+        self.password = str(self.config.get("webui_password", "daymind") or "daymind")
 
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
@@ -98,6 +99,30 @@ class DayMindWebUI:
                 return personas[0]
         return None
 
+    def _is_authorized(self, provided_password: str | None) -> bool:
+        expected = str(self.password or "daymind")
+        provided = str(provided_password or "")
+        return bool(provided) and provided == expected
+
+    def _raise_unauthorized(self):
+        raise HTTPException(status_code=401, detail="未授权：WebUI 密码错误或未提供")
+
+    def _extract_password(self, request: Request, x_daymind_password: str | None = None) -> str | None:
+        if x_daymind_password:
+            return x_daymind_password
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        cookie_value = request.cookies.get("daymind_password")
+        if cookie_value:
+            return str(cookie_value).strip()
+        return None
+
+    def _require_auth(self, request: Request, x_daymind_password: str | None = None):
+        provided_password = self._extract_password(request, x_daymind_password)
+        if not self._is_authorized(provided_password):
+            self._raise_unauthorized()
+
     def _setup_routes(self):
         @self._app.get("/", response_class=HTMLResponse)
         async def index():
@@ -108,7 +133,8 @@ class DayMindWebUI:
             return {"status": "ok", "plugin": "daymind", "version": "1.1.0"}
 
         @self._app.get("/api/status")
-        async def status(persona_name: str | None = None):
+        async def status(request: Request, persona_name: str | None = None, x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             scheduler_status = self.scheduler.get_status() if self.scheduler else {}
             available_personas = list(scheduler_status.get("enabled_personas", []) or [])
             requested_persona = str(persona_name or "").strip() or None
@@ -155,13 +181,15 @@ class DayMindWebUI:
             }
 
         @self._app.get("/api/config")
-        async def get_config():
+        async def get_config(request: Request, x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
             return {"success": True, "data": self.scheduler.get_runtime_config()}
 
         @self._app.post("/api/config")
-        async def update_config(payload: ConfigUpdatePayload):
+        async def update_config(request: Request, payload: ConfigUpdatePayload, x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
             updates = payload.model_dump(exclude_none=True)
@@ -171,7 +199,8 @@ class DayMindWebUI:
             return {"success": True, "data": data}
 
         @self._app.post("/api/reflections/today/reset")
-        async def reset_today_reflections(persona_name: str | None = Query(default=None)):
+        async def reset_today_reflections(request: Request, persona_name: str | None = Query(default=None), x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
             effective_persona = self._resolve_persona_query(persona_name)
@@ -181,13 +210,15 @@ class DayMindWebUI:
             return {"success": True, "data": data}
 
         @self._app.get("/api/diaries")
-        async def list_diaries(days: int | None = None, starred_only: bool = False):
+        async def list_diaries(request: Request, days: int | None = None, starred_only: bool = False, x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if self.scheduler:
                 return {"success": True, "data": self.scheduler.list_diaries(days, starred_only=starred_only)}
             return {"success": True, "data": self._list_diaries(days)}
 
         @self._app.get("/api/diaries/{date_str}")
-        async def get_diary(date_str: str, persona_name: str | None = Query(default=None)):
+        async def get_diary(request: Request, date_str: str, persona_name: str | None = Query(default=None), x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             effective_persona = self._resolve_persona_query(persona_name)
             item = self.scheduler.get_diary_item(date_str, effective_persona) if self.scheduler else self._read_diary(date_str, effective_persona)
             if not item:
@@ -195,7 +226,8 @@ class DayMindWebUI:
             return {"success": True, "data": item}
 
         @self._app.patch("/api/diaries/{date_str}")
-        async def patch_diary(date_str: str, payload: MetaUpdatePayload, persona_name: str | None = Query(default=None)):
+        async def patch_diary(request: Request, date_str: str, payload: MetaUpdatePayload, persona_name: str | None = Query(default=None), x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
             effective_persona = self._resolve_persona_query(persona_name)
@@ -211,13 +243,15 @@ class DayMindWebUI:
             return {"success": True, "data": data}
 
         @self._app.get("/api/reflections")
-        async def list_reflections(days: int | None = None, starred_only: bool = False):
+        async def list_reflections(request: Request, days: int | None = None, starred_only: bool = False, x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if self.scheduler:
                 return {"success": True, "data": self.scheduler.list_reflection_days(days, starred_only=starred_only)}
             return {"success": True, "data": self._list_reflection_days(days)}
 
         @self._app.get("/api/reflections/{date_str}")
-        async def get_reflections(date_str: str, persona_name: str | None = Query(default=None)):
+        async def get_reflections(request: Request, date_str: str, persona_name: str | None = Query(default=None), x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             effective_persona = self._resolve_persona_query(persona_name)
             item = self.scheduler.get_reflection_day_item(date_str, effective_persona) if self.scheduler else self._read_reflection_day(date_str, effective_persona)
             if not item:
@@ -225,7 +259,8 @@ class DayMindWebUI:
             return {"success": True, "data": item}
 
         @self._app.patch("/api/reflections/{date_str}")
-        async def patch_reflections(date_str: str, payload: MetaUpdatePayload, persona_name: str | None = Query(default=None)):
+        async def patch_reflections(request: Request, date_str: str, payload: MetaUpdatePayload, persona_name: str | None = Query(default=None), x_daymind_password: str | None = Header(default=None)):
+            self._require_auth(request, x_daymind_password)
             if not self.scheduler:
                 raise HTTPException(status_code=500, detail="scheduler unavailable")
             effective_persona = self._resolve_persona_query(persona_name)
@@ -1578,6 +1613,7 @@ class DayMindWebUI:
       jumping: false,
       starredOnly: false,
       savingNote: false,
+      password: localStorage.getItem('daymind-webui-password') || '',
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1612,11 +1648,45 @@ class DayMindWebUI:
       return `<span class="title-date">${esc(date)}</span><span class="title-sep"> · </span>${esc(label)}`;
     }
 
+    function getSavedPassword() {
+      return localStorage.getItem('daymind-webui-password') || '';
+    }
+
+    function savePassword(password) {
+      const value = String(password || '').trim();
+      localStorage.setItem('daymind-webui-password', value);
+      state.password = value;
+    }
+
+    async function ensurePassword(force = false) {
+      if (!force && state.password) return state.password;
+      const preset = force ? '' : (state.password || getSavedPassword() || 'daymind');
+      const input = window.prompt('请输入 DayMind WebUI 密码。默认密码为 daymind，建议尽快修改。', preset);
+      if (input === null) throw new Error('未提供 WebUI 密码');
+      const password = String(input || '').trim();
+      if (!password) throw new Error('WebUI 密码不能为空');
+      savePassword(password);
+      return password;
+    }
+
     async function api(url, options = {}) {
-      const res = await fetch(url, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      const password = await ensurePassword(false);
+      const mergedHeaders = {
+        'Content-Type': 'application/json',
+        'X-DayMind-Password': password,
+        ...(options.headers || {}),
+      };
+      let res = await fetch(url, {
         ...options,
+        headers: mergedHeaders,
       });
+      if (res.status === 401) {
+        const refreshed = await ensurePassword(true);
+        res = await fetch(url, {
+          ...options,
+          headers: { ...mergedHeaders, 'X-DayMind-Password': refreshed },
+        });
+      }
       if (!res.ok) {
         let msg = url;
         try {
