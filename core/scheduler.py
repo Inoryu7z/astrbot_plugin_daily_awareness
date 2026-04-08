@@ -234,6 +234,9 @@ class AwarenessScheduler(PersonaConfigMixin):
                 "last_diary_error_code": None,
                 "last_diary_error_message": None,
                 "last_diary_error_time": None,
+                "last_diary_failure_time": None,
+                "last_diary_cooldown_until": None,
+                "last_diary_failed_trigger_key": "",
                 "last_dedupe_hit": False,
                 "last_dedupe_mode": "none",
                 "last_dedupe_source": None,
@@ -270,6 +273,9 @@ class AwarenessScheduler(PersonaConfigMixin):
                 "last_diary_error_code": state.get("last_diary_error_code"),
                 "last_diary_error_message": state.get("last_diary_error_message"),
                 "last_diary_error_time": state.get("last_diary_error_time"),
+                "last_diary_failure_time": state.get("last_diary_failure_time").isoformat() if state.get("last_diary_failure_time") else None,
+                "last_diary_cooldown_until": state.get("last_diary_cooldown_until").isoformat() if state.get("last_diary_cooldown_until") else None,
+                "last_diary_failed_trigger_key": str(state.get("last_diary_failed_trigger_key") or ""),
                 "last_dedupe_hit": bool(state.get("last_dedupe_hit", False)),
                 "last_dedupe_mode": str(state.get("last_dedupe_mode") or "none"),
                 "last_dedupe_source": state.get("last_dedupe_source"),
@@ -315,6 +321,13 @@ class AwarenessScheduler(PersonaConfigMixin):
             item["last_diary_error_code"] = state.get("last_diary_error_code")
             item["last_diary_error_message"] = state.get("last_diary_error_message")
             item["last_diary_error_time"] = state.get("last_diary_error_time")
+            for field in ["last_diary_failure_time", "last_diary_cooldown_until"]:
+                raw = state.get(field)
+                try:
+                    item[field] = datetime.datetime.fromisoformat(raw) if raw else None
+                except Exception:
+                    item[field] = None
+            item["last_diary_failed_trigger_key"] = str(state.get("last_diary_failed_trigger_key") or "")
             item["last_dedupe_hit"] = bool(state.get("last_dedupe_hit", False))
             item["last_dedupe_mode"] = str(state.get("last_dedupe_mode") or "none")
             item["last_dedupe_source"] = state.get("last_dedupe_source")
@@ -406,6 +419,9 @@ class AwarenessScheduler(PersonaConfigMixin):
         state["last_dedupe_source"] = None
         self._clear_reflection_error(persona_name)
         self._clear_diary_error(persona_name)
+        state["last_diary_failure_time"] = None
+        state["last_diary_cooldown_until"] = None
+        state["last_diary_failed_trigger_key"] = ""
 
     async def reset_today_reflections(self, persona_name: str | None = None) -> dict[str, Any]:
         now = datetime.datetime.now()
@@ -720,6 +736,9 @@ class AwarenessScheduler(PersonaConfigMixin):
         except Exception:
             return 2.0
 
+    def _get_diary_failure_cooldown_seconds(self, persona_name: str | None) -> int:
+        return self._safe_seconds(self._persona_value(persona_name, "diary_failure_cooldown_seconds", 600), 600)
+
     async def _run_reflection_generation_with_retries(
         self,
         current_time_str: str,
@@ -890,6 +909,16 @@ class AwarenessScheduler(PersonaConfigMixin):
         diary_hour, diary_minute = self._get_persona_diary_time(persona_name)
         target_dt = now.replace(hour=diary_hour, minute=diary_minute, second=0, microsecond=0)
         trigger_key = f"{today_str}@{diary_hour:02d}:{diary_minute:02d}"
+        failed_trigger_key = str(state.get("last_diary_failed_trigger_key") or "")
+        cooldown_until = state.get("last_diary_cooldown_until")
+        if failed_trigger_key == trigger_key and cooldown_until:
+            remaining = (cooldown_until - now).total_seconds()
+            if remaining > 0:
+                return max(remaining, 1.0)
+            state["last_diary_cooldown_until"] = None
+            state["last_diary_failure_time"] = None
+            state["last_diary_failed_trigger_key"] = ""
+            self._persist_state()
         last_auto_trigger_key = str(state.get("last_auto_diary_trigger_key") or "")
         if last_auto_trigger_key == trigger_key:
             return None
@@ -927,6 +956,16 @@ class AwarenessScheduler(PersonaConfigMixin):
 
                     if auto_diary_enabled:
                         has_reached_target = current_total_minutes >= target_total_minutes
+                        failed_trigger_key = str(state.get("last_diary_failed_trigger_key") or "")
+                        cooldown_until = state.get("last_diary_cooldown_until")
+                        if failed_trigger_key == trigger_key and cooldown_until:
+                            remaining = (cooldown_until - now).total_seconds()
+                            if remaining > 0:
+                                continue
+                            state["last_diary_cooldown_until"] = None
+                            state["last_diary_failure_time"] = None
+                            state["last_diary_failed_trigger_key"] = ""
+                            self._persist_state()
                         last_auto_trigger_key = str(state.get("last_auto_diary_trigger_key") or "")
                         if has_reached_target and last_auto_trigger_key != trigger_key:
                             state["last_diary_check_minute"] = current_total_minutes
@@ -937,11 +976,22 @@ class AwarenessScheduler(PersonaConfigMixin):
                             result = await self._generate_and_push_diary(today_str, persona_name)
                             status = str((result or {}).get("status") or "")
                             if status not in {"success", "exists"}:
+                                failure_time = datetime.datetime.now()
+                                cooldown_seconds = self._get_diary_failure_cooldown_seconds(persona_name)
+                                state["last_diary_failure_time"] = failure_time
+                                state["last_diary_failed_trigger_key"] = trigger_key
+                                state["last_diary_cooldown_until"] = failure_time + datetime.timedelta(seconds=cooldown_seconds) if cooldown_seconds > 0 else failure_time
                                 if str(state.get("last_auto_diary_trigger_key") or "") == trigger_key:
                                     state["last_auto_diary_trigger_key"] = ""
-                                    self._persist_state()
-                            elif self._is_debug_mode():
-                                logger.info(f"[Scheduler][debug] 自动日记处理完成: persona={persona_name}, trigger_key={trigger_key}, status={status}")
+                                self._persist_state()
+                                logger.warning(f"[Scheduler] 自动日记失败进入冷却: persona={persona_name}, trigger_key={trigger_key}, status={status}, cooldown={cooldown_seconds}s")
+                            else:
+                                state["last_diary_failure_time"] = None
+                                state["last_diary_cooldown_until"] = None
+                                state["last_diary_failed_trigger_key"] = ""
+                                self._persist_state()
+                                if self._is_debug_mode():
+                                    logger.info(f"[Scheduler][debug] 自动日记处理完成: persona={persona_name}, trigger_key={trigger_key}, status={status}")
 
                     auto_reflection_enabled = bool(self._persona_value(persona_name, "enable_auto_reflection", True))
                     if auto_reflection_enabled:
@@ -1438,6 +1488,9 @@ class AwarenessScheduler(PersonaConfigMixin):
                 await self._push_diary_to_targets(diary_content, persona_name)
             state["diary_generated_today"] = True
             state["last_diary_date"] = date_str
+            state["last_diary_failure_time"] = None
+            state["last_diary_cooldown_until"] = None
+            state["last_diary_failed_trigger_key"] = ""
             self._clear_diary_error(persona_name)
             self._persist_state()
             return {"status": "success", "content": diary_content, "marked_deleted": int(regeneration_info.get('updated', 0) or 0), "schedule_data": (ensured_schedule or {}).get("data") or {}, "schedule_generated_now": bool((ensured_schedule or {}).get("generated_now"))}
@@ -1621,6 +1674,9 @@ class AwarenessScheduler(PersonaConfigMixin):
             "last_diary_error_code": state.get("last_diary_error_code") if state else None,
             "last_diary_error_message": state.get("last_diary_error_message") if state else None,
             "last_diary_error_time": state.get("last_diary_error_time") if state else None,
+            "last_diary_failure_time": state.get("last_diary_failure_time").strftime("%H:%M:%S") if state and state.get("last_diary_failure_time") else None,
+            "last_diary_cooldown_until": state.get("last_diary_cooldown_until").strftime("%H:%M:%S") if state and state.get("last_diary_cooldown_until") else None,
+            "last_diary_failed_trigger_key": state.get("last_diary_failed_trigger_key", "") if state else "",
             "last_dedupe_hit": bool(state.get("last_dedupe_hit", False)) if state else False,
             "last_dedupe_mode": state.get("last_dedupe_mode", "none") if state else "none",
             "last_dedupe_source": state.get("last_dedupe_source") if state else None,

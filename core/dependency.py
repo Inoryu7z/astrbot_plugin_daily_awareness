@@ -25,12 +25,19 @@ class DependencyManager:
         self._life_scheduler_instance = None
         self._livingmemory_instance = None
 
-    def _extract_star_instance(self, star_metadata):
+    def _extract_star_instances(self, star_metadata):
+        instances = []
+        seen_ids = set()
         for attr in ("star", "instance", "plugin", "obj", "star_cls"):
             value = getattr(star_metadata, attr, None)
-            if value is not None:
-                return value
-        return None
+            if value is None:
+                continue
+            marker = id(value)
+            if marker in seen_ids:
+                continue
+            seen_ids.add(marker)
+            instances.append(value)
+        return instances
 
     def _is_valid_dayflow_instance(self, instance) -> bool:
         if instance is None:
@@ -38,7 +45,11 @@ class DependencyManager:
         if hasattr(instance, "get_life_context"):
             return True
         service = getattr(instance, "service", None)
-        return service is not None and hasattr(service, "generate_schedule") and hasattr(service, "save_generated")
+        if service is None:
+            return False
+        if hasattr(service, "get_life_context"):
+            return True
+        return hasattr(service, "generate_schedule") and hasattr(service, "save_generated")
 
     def _is_valid_livingmemory_instance(self, instance) -> bool:
         if instance is None:
@@ -61,28 +72,31 @@ class DependencyManager:
 
             for star_metadata in self.context.get_all_stars():
                 star_name = str(getattr(star_metadata, "name", "") or "").strip()
-                star_instance = self._extract_star_instance(star_metadata)
+                star_instances = self._extract_star_instances(star_metadata)
 
                 if star_name == self.PREFERRED_DAYFLOW_PLUGIN_NAME:
-                    if self._is_valid_dayflow_instance(star_instance):
-                        preferred_valid_instance = star_instance
-                    else:
+                    valid_candidate = next((item for item in star_instances if self._is_valid_dayflow_instance(item)), None)
+                    if valid_candidate is not None:
+                        preferred_valid_instance = valid_candidate
+                    elif star_instances:
                         preferred_incomplete_detected = True
                     continue
 
                 if star_name == self.LEGACY_DAYFLOW_PLUGIN_NAME:
-                    if self._is_valid_dayflow_instance(star_instance):
-                        legacy_valid_instance = star_instance
-                    else:
+                    valid_candidate = next((item for item in star_instances if self._is_valid_dayflow_instance(item)), None)
+                    if valid_candidate is not None:
+                        legacy_valid_instance = valid_candidate
+                    elif star_instances:
                         legacy_incomplete_detected = True
                     continue
 
                 if star_name == "astrbot_plugin_livingmemory":
-                    if self._is_valid_livingmemory_instance(star_instance):
+                    valid_candidate = next((item for item in star_instances if self._is_valid_livingmemory_instance(item)), None)
+                    if valid_candidate is not None:
                         result["livingmemory"] = True
-                        self._livingmemory_instance = star_instance
+                        self._livingmemory_instance = valid_candidate
                         logger.info("[DayMind] 检测到 livingmemory 插件，日记将存入记忆系统")
-                    else:
+                    elif star_instances:
                         logger.warning("[DayMind] 检测到 livingmemory 插件但未找到可用 memory_engine，已跳过绑定")
 
             bound_name = None
@@ -162,6 +176,8 @@ class DependencyManager:
     ) -> dict:
         """获取日程数据"""
         if not self.has_life_scheduler:
+            self.check_dependencies()
+        if not self.has_life_scheduler:
             if debug:
                 logger.info("[DayMind][debug] get_schedule_data: 未检测到日程插件")
             return {}
@@ -178,6 +194,17 @@ class DependencyManager:
                 if debug:
                     logger.info(
                         f"[DayMind][debug] get_schedule_data success: session={session_id}, persona={persona_name}, target_date={target_date or ''}, "
+                        f"outfit={str(data.get('outfit', ''))[:120]}, schedule={str(data.get('schedule', ''))[:300]}"
+                    )
+                return data
+
+            service = getattr(target, "service", None) if target else None
+            if service and hasattr(service, "get_life_context"):
+                data = await service.get_life_context(session_id=session_id, persona_name=persona_name, target_date=target_date)
+                data = data if isinstance(data, dict) else {}
+                if debug:
+                    logger.info(
+                        f"[DayMind][debug] get_schedule_data success(service): session={session_id}, persona={persona_name}, target_date={target_date or ''}, "
                         f"outfit={str(data.get('outfit', ''))[:120]}, schedule={str(data.get('schedule', ''))[:300]}"
                     )
                 return data
@@ -223,7 +250,9 @@ class DependencyManager:
             return result
 
         if not self.has_life_scheduler:
-            result["message"] = "未检测到 Dayflow 日程插件，无法自动补生成目标日期日程"
+            self.check_dependencies()
+        if not self.has_life_scheduler:
+            result["message"] = "未检测到可用的 Dayflow 日程实例，无法自动补生成目标日期日程"
             return result
 
         target = self._life_scheduler_instance
