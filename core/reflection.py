@@ -55,11 +55,13 @@ class ReflectionGenerator(PersonaConfigMixin):
         try:
             canonical_persona = self._canonical_persona_name(persona_name)
             auto_ensure_schedule = bool(self._persona_value(canonical_persona, "reflection_auto_ensure_today_schedule", True))
+            today_str = datetime.datetime.now().strftime("%Y-%m-%d")
             if auto_ensure_schedule:
                 schedule_result = await self.dependency_manager.ensure_today_schedule(
                     session_id=session_id,
                     persona_name=canonical_persona,
                     persona_desc=persona_desc,
+                    target_date=today_str,
                     debug=bool(self.config.get("debug_mode", False)),
                 )
                 schedule_data = schedule_result.get("data") or {}
@@ -67,13 +69,14 @@ class ReflectionGenerator(PersonaConfigMixin):
                     if self.config.get("debug_mode", False):
                         logger.info(
                             f"[ReflectionGenerator][debug] ensure_today_schedule failed for reflection: "
-                            f"persona={canonical_persona}, session={session_id}, reason={schedule_result.get('message', '')}"
+                            f"persona={canonical_persona}, session={session_id}, target_date={today_str}, reason={schedule_result.get('message', '')}"
                         )
                     schedule_data = {}
             else:
                 schedule_data = await self.dependency_manager.get_schedule_data(
                     session_id=session_id,
                     persona_name=canonical_persona,
+                    target_date=today_str,
                     debug=bool(self.config.get("debug_mode", False)),
                 )
 
@@ -102,7 +105,7 @@ class ReflectionGenerator(PersonaConfigMixin):
                     f"[ReflectionGenerator][debug] generate params: session={session_id}, persona={resolved_name}, "
                     f"recent_messages={len(recent_messages)}, last_awareness_len={len(last_awareness_text or '')}, "
                     f"schedule_outfit={str(schedule_data.get('outfit', ''))[:120]}, schedule={str(schedule_data.get('schedule', ''))[:300]}, "
-                    f"auto_ensure_schedule={auto_ensure_schedule}"
+                    f"auto_ensure_schedule={auto_ensure_schedule}, target_date={today_str}"
                 )
 
             prompt = self._build_prompt(
@@ -257,7 +260,7 @@ class ReflectionGenerator(PersonaConfigMixin):
 - 第二优先：此刻最突出的情绪、注意力落点、心理余波
 - 第三优先：最近对话带来的轻微情绪残留或关注点
 - 第四优先：最近思考提供的连续性线索
-- 最低优先：穿搭、外貌、饰品、材质、配色等外观信息
+- 最低优先：穿搭、外貌、材质、配色、饰品等外观信息
 
 4. 【服装只可一笔带过】
 即使【当前现实状态】里存在大量穿搭描写，正文也不得展开复述服装细节。
@@ -292,7 +295,7 @@ class ReflectionGenerator(PersonaConfigMixin):
 9. 【这是自我思考，不是对外说话】
 - 正文不要直接使用“你、你们”去称呼聊天对象。
 - 如果必须提到互动对象，只能用第三人称表达。
-- 禁止写成打招呼、安慰、回应、解释、汇报。
+- 禁止写成打招呼、安慰、回应、汇报。
 
 ## 输出规范
 请严格匹配当前模式定义，同时遵守{length_hint}的长度要求。

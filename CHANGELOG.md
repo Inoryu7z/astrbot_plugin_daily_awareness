@@ -1,3 +1,12 @@
+### v1.3.3
+
+**🔗 DayMind 思考时读取 DayFlow 日程链路修复**
+
+* 修复思考链路中 target_date 参数可能为空值流入 get_life_context 的问题，现在思考前始终强制传入当天日期。
+* 确保 ensure_today_schedule 和 get_schedule_data 调用时 target_date 参数稳定可用，消除竞态窗口导致的日程读取失败。
+
+---
+
 ### v1.3.2
 
 **🛠️ Dayflow 依赖识别与自动日记防刷屏修复**
