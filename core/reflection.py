@@ -182,7 +182,6 @@ class ReflectionGenerator(PersonaConfigMixin):
                 mode_desc=mode_desc,
                 mode_definition=mode_definition,
                 length_hint=length_hint,
-                last_awareness=recent_awareness_text,
                 recent_awareness=recent_awareness_text,
             )
         except KeyError as e:
@@ -198,8 +197,6 @@ class ReflectionGenerator(PersonaConfigMixin):
     def _ensure_recent_awareness_placeholder(self, template: str) -> str:
         if "{recent_awareness}" in template:
             return template
-        if "{last_awareness}" in template:
-            return template.replace("{last_awareness}", "{recent_awareness}")
         marker = "## 核心规则"
         awareness_block = "\n\n## 最近思考\n{recent_awareness}\n"
         if marker in template:

@@ -175,8 +175,7 @@ DayFlow 可以读取 DayMind 的心情状态，用于：
 - `enabled_personas`：启用的人格白名单
 
 ### 心情系统
-- `enable_mood_system`：是否启用心情系统
-- `inject_mood_into_reply`：是否将心情注入对话风格
+- `enable_mood_system`：是否启用心情系统（启用后自动注入对话风格）
 - `mood_provider_id`：心情模型提供商（留空则从思考中提取）
 - `mood_reference_reflection_count`：心情提取时参考最近几条思考
 - `mood_max_history_per_day`：每日保留心情记录数

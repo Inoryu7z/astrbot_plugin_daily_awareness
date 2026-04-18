@@ -467,7 +467,6 @@ class DayMindPlugin(Star, PersonaConfigMixin):
             f"自动思考: {status.get('enable_auto_reflection')}\n"
             f"自动日记: {status.get('enable_auto_diary')}\n"
             f"心情系统: {status.get('enable_mood_system')}\n"
-            f"心情注入回复: {status.get('inject_mood_into_reply')}\n"
             f"当前心情: {mood_text}\n"
             f"上一轮心情: {previous_mood_text}\n"
             f"今日心情记录数: {status.get('today_moods_count', 0)}\n"

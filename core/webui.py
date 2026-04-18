@@ -16,6 +16,8 @@ from pydantic import BaseModel
 
 from astrbot.api import logger
 
+from ..config import PLUGIN_VERSION
+
 
 class ConfigUpdatePayload(BaseModel):
     reflection_retention_days: int | None = None
@@ -44,7 +46,7 @@ class DayMindWebUI:
 
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
-        self._app = FastAPI(title="DayMind WebUI", version="1.3.1")
+        self._app = FastAPI(title="DayMind WebUI", version=PLUGIN_VERSION)
         self._setup_routes()
 
     async def start(self):
@@ -130,7 +132,7 @@ class DayMindWebUI:
 
         @self._app.get("/api/health")
         async def health():
-            return {"status": "ok", "plugin": "daymind", "version": "1.3.1"}
+            return {"status": "ok", "plugin": "daymind", "version": PLUGIN_VERSION}
 
         @self._app.get("/api/status")
         async def status(request: Request, persona_name: str | None = None, x_daymind_password: str | None = Header(default=None)):

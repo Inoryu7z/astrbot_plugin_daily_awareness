@@ -1689,7 +1689,6 @@ class AwarenessScheduler(PersonaConfigMixin):
             "webui_default_theme": runtime_config["webui_default_theme"],
             "webui_default_mode": runtime_config["webui_default_mode"],
             "enable_mood_system": self.mood_manager.is_mood_enabled(canonical_persona) if self.mood_manager else bool(self._persona_value(canonical_persona, "enable_mood_system", True)),
-            "inject_mood_into_reply": self.mood_manager.is_inject_mood_into_reply(canonical_persona) if self.mood_manager else bool(self._persona_value(canonical_persona, "inject_mood_into_reply", True)),
             "current_mood": current_mood,
             "previous_mood": previous_mood,
             "today_moods_count": today_moods_count,

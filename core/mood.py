@@ -158,11 +158,6 @@ class MoodManager(PersonaConfigMixin):
         return bool(self._persona_value(persona_name, "enable_mood_system", True))
 
     def is_inject_mood_into_reply(self, persona_name: str | None = None) -> bool:
-        # 新语义：启用心情系统时默认注入；旧字段 inject_mood_into_reply 仅作兼容回退
-        if self._find_persona_config(persona_name) is not None:
-            return self.is_mood_enabled(persona_name)
-        if "inject_mood_into_reply" in self.config:
-            return bool(self.config.get("inject_mood_into_reply", True)) and self.is_mood_enabled(persona_name)
         return self.is_mood_enabled(persona_name)
 
     def has_mood_provider(self, persona_name: str | None = None) -> bool:

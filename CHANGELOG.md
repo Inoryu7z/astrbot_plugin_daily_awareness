@@ -1,5 +1,13 @@
 ### v1.3.3
 
+**🧹 Legacy 清理**
+
+* 移除 `inject_mood_into_reply` 旧字段兼容回退，心情注入语义统一由 `enable_mood_system` 控制。
+* 移除 `reflection.py` 中 `{last_awareness}` 旧占位符兼容替换及重复传参。
+* 修复 `config.py` 版本号与 `metadata.yaml` 不一致（1.3.2 → 1.3.3）。
+* 修复 `webui.py` 中硬编码版本号，改为引用 `PLUGIN_VERSION` 常量。
+* 更新 README 移除已废弃的 `inject_mood_into_reply` 配置项说明。
+
 **🔗 DayMind 思考时读取 DayFlow 日程链路修复**
 
 * 修复思考链路中 target_date 参数可能为空值流入 get_life_context 的问题，现在思考前始终强制传入当天日期。
