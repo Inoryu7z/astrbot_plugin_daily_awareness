@@ -5,6 +5,8 @@ DayMind WebUI
 """
 
 import asyncio
+import hmac
+import json
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -104,7 +106,7 @@ class DayMindWebUI:
     def _is_authorized(self, provided_password: str | None) -> bool:
         expected = str(self.password or "daymind")
         provided = str(provided_password or "")
-        return bool(provided) and provided == expected
+        return bool(provided) and hmac.compare_digest(provided, expected)
 
     def _raise_unauthorized(self):
         raise HTTPException(status_code=401, detail="未授权：WebUI 密码错误或未提供")
@@ -397,7 +399,6 @@ class DayMindWebUI:
                 if not self._date_in_window(date_str, window_days):
                     continue
                 try:
-                    import json
                     rows = json.loads(fp.read_text(encoding="utf-8"))
                     if not isinstance(rows, list):
                         rows = []
@@ -426,7 +427,6 @@ class DayMindWebUI:
             fp = self._reflections_dir() / normalized_persona / f"{date_str}.json"
             if not fp.exists():
                 return None
-            import json
             rows = json.loads(fp.read_text(encoding="utf-8"))
             if not isinstance(rows, list):
                 rows = []
@@ -442,7 +442,6 @@ class DayMindWebUI:
             fp = persona_dir / f"{date_str}.json"
             if not fp.exists():
                 continue
-            import json
             rows = json.loads(fp.read_text(encoding="utf-8"))
             if not isinstance(rows, list):
                 rows = []
@@ -462,7 +461,6 @@ class DayMindWebUI:
             if not meta_file.exists():
                 return "unknown"
             try:
-                import json
                 data = json.loads(meta_file.read_text(encoding="utf-8"))
                 status = str(data.get("memory_status") or "unknown").strip() or "unknown"
                 return status

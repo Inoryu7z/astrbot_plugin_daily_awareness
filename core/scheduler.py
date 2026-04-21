@@ -459,7 +459,7 @@ class AwarenessScheduler(PersonaConfigMixin):
 
     def _sanitize_persona_path(self, persona_name: str) -> str:
         canonical = self._canonical_persona_name(persona_name) or persona_name
-        return re.sub(r'[\/:*?"<>|]+', '_', canonical).strip() or '未命名人格'
+        return re.sub(r'[\\/:*?"<>|]+', '_', canonical).strip() or '未命名人格'
 
     def _diaries_dir(self, persona_name: str | None = None) -> Path:
         base = Path(self.data_dir) / "diaries"
@@ -1189,29 +1189,21 @@ class AwarenessScheduler(PersonaConfigMixin):
             return "（暂无最近思考）"
         return "\n".join([f"- {x}" for x in recent])
 
-    def _is_persona_silent(self, persona_name: str | None) -> bool:
+    def _get_silent_checker(self, persona_name: str | None) -> SilentHoursChecker:
         persona_name = self._canonical_persona_name(persona_name)
         enabled = bool(self._persona_value(persona_name, "silent_hours_enabled", self.config.get("silent_hours_enabled", True)))
         start_time = str(self._persona_value(persona_name, "silent_hours_start", self.config.get("silent_hours_start", "00:00")) or "00:00")
         end_time = str(self._persona_value(persona_name, "silent_hours_end", self.config.get("silent_hours_end", "06:00")) or "06:00")
-        checker = SilentHoursChecker(start_time=start_time, end_time=end_time, enabled=enabled)
-        return checker.is_silent()
+        return SilentHoursChecker(start_time=start_time, end_time=end_time, enabled=enabled)
+
+    def _is_persona_silent(self, persona_name: str | None) -> bool:
+        return self._get_silent_checker(persona_name).is_silent()
 
     def _seconds_until_persona_silent_ends(self, persona_name: str | None) -> float | None:
-        persona_name = self._canonical_persona_name(persona_name)
-        enabled = bool(self._persona_value(persona_name, "silent_hours_enabled", self.config.get("silent_hours_enabled", True)))
-        start_time = str(self._persona_value(persona_name, "silent_hours_start", self.config.get("silent_hours_start", "00:00")) or "00:00")
-        end_time = str(self._persona_value(persona_name, "silent_hours_end", self.config.get("silent_hours_end", "06:00")) or "06:00")
-        checker = SilentHoursChecker(start_time=start_time, end_time=end_time, enabled=enabled)
-        return checker.seconds_until_silent_ends()
+        return self._get_silent_checker(persona_name).seconds_until_silent_ends()
 
     def _get_persona_silent_status(self, persona_name: str | None) -> dict:
-        persona_name = self._canonical_persona_name(persona_name)
-        enabled = bool(self._persona_value(persona_name, "silent_hours_enabled", self.config.get("silent_hours_enabled", True)))
-        start_time = str(self._persona_value(persona_name, "silent_hours_start", self.config.get("silent_hours_start", "00:00")) or "00:00")
-        end_time = str(self._persona_value(persona_name, "silent_hours_end", self.config.get("silent_hours_end", "06:00")) or "06:00")
-        checker = SilentHoursChecker(start_time=start_time, end_time=end_time, enabled=enabled)
-        return checker.get_status()
+        return self._get_silent_checker(persona_name).get_status()
 
     def _get_persona_diary_time(self, persona_name: str | None) -> tuple[int, int]:
         persona_name = self._canonical_persona_name(persona_name)

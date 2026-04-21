@@ -4,6 +4,7 @@
 """
 
 import inspect
+import time
 from typing import Optional, Any
 from astrbot.api import logger
 
@@ -592,7 +593,7 @@ class DependencyManager:
                         "status": "deleted",
                         "deleted": True,
                         "deleted_by": "daymind_regeneration",
-                        "deleted_at": __import__("time").time(),
+                        "deleted_at": time.time(),
                     }
                 }
                 success = await memory_engine.update_memory(memory["id"], updates)
