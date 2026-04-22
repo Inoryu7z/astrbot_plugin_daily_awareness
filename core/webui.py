@@ -493,6 +493,9 @@ class DayMindWebUI:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DayMind · Archive & Starfield</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=ZCOOL+XiaoWei&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #070a13;
@@ -1797,6 +1800,680 @@ class DayMindWebUI:
         transition-duration: 0.01ms !important;
       }
     }
+
+    body.theme-journal {
+      --bg: #f5efe6;
+      --bg-2: #ede4d3;
+      --panel: rgba(255,252,245,.92);
+      --panel-2: rgba(250,245,235,.92);
+      --line: rgba(139,109,63,.14);
+      --line-2: rgba(139,109,63,.22);
+      --text: #3d2e1e;
+      --muted: #8b7355;
+      --gold: #d4923a;
+      --cyan: #5a9e7c;
+      --violet: #9b72a8;
+      --rose: #d4728c;
+      --ok: #5a9e7c;
+      --danger: #c45c5c;
+      --shadow: 0 12px 40px rgba(80,60,30,.12);
+      --display: 'ZCOOL XiaoWei', 'KaiTi', 'STKaiti', serif;
+      --body: 'ZCOOL XiaoWei', 'KaiTi', 'STKaiti', 'Microsoft YaHei', sans-serif;
+      --numeric: 'Caveat', 'KaiTi', serif;
+      --r-xl: 16px;
+      --r-lg: 14px;
+      --r-md: 12px;
+      --pill: 999px;
+      background:
+        radial-gradient(circle at 20% 30%, rgba(212,146,58,.06), transparent 30%),
+        radial-gradient(circle at 80% 70%, rgba(90,158,124,.06), transparent 30%),
+        linear-gradient(180deg, #f5efe6 0%, #ede4d3 50%, #e8dcc8 100%);
+    }
+
+    body.theme-journal::before,
+    body.theme-journal::after {
+      display: none;
+    }
+
+    body.theme-journal .glass {
+      background: linear-gradient(180deg, rgba(255,252,245,.95), rgba(250,245,235,.92));
+      border: 1px solid rgba(139,109,63,.12);
+      box-shadow: 0 8px 32px rgba(80,60,30,.08);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    body.theme-journal .sidebar {
+      border-radius: var(--r-xl);
+    }
+
+    body.theme-journal .eyebrow {
+      color: var(--gold);
+      border-color: rgba(212,146,58,.2);
+      background: rgba(212,146,58,.06);
+    }
+
+    body.theme-journal .module {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+    }
+
+    body.theme-journal button {
+      border-color: rgba(139,109,63,.12);
+      background: rgba(255,255,255,.5);
+      color: var(--text);
+    }
+
+    body.theme-journal button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(80,60,30,.1);
+    }
+
+    body.theme-journal button.active {
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--gold), var(--cyan));
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(212,146,58,.2);
+    }
+
+    body.theme-journal .mini {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+    }
+
+    body.theme-journal .entry {
+      border-color: rgba(139,109,63,.1);
+      background: linear-gradient(180deg, rgba(255,255,255,.6), rgba(255,255,255,.3));
+    }
+
+    body.theme-journal .entry:hover {
+      border-color: rgba(212,146,58,.24);
+      box-shadow: 0 6px 18px rgba(80,60,30,.08);
+    }
+
+    body.theme-journal .entry.active {
+      border-color: rgba(212,146,58,.3);
+      box-shadow: inset 0 0 0 1px rgba(212,146,58,.15);
+    }
+
+    body.theme-journal .chip {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+    }
+
+    body.theme-journal .chip.starred {
+      border-color: rgba(212,146,58,.2);
+      color: var(--gold);
+    }
+
+    body.theme-journal .searchbar input,
+    body.theme-journal .field input,
+    body.theme-journal .field select,
+    body.theme-journal .field textarea {
+      border-color: rgba(139,109,63,.12);
+      background: rgba(255,255,255,.6);
+      color: var(--text);
+    }
+
+    body.theme-journal .searchbar::before {
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%238b7355' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") no-repeat center;
+    }
+
+    body.theme-journal .status {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+    }
+
+    body.theme-journal .status.ok { color: #2d6b46; border-color: rgba(90,158,124,.16); background: rgba(90,158,124,.06); }
+    body.theme-journal .status.warn { color: #8b5e1a; border-color: rgba(212,146,58,.16); background: rgba(212,146,58,.06); }
+    body.theme-journal .status.err { color: #8b3030; border-color: rgba(196,92,92,.16); background: rgba(196,92,92,.06); }
+
+    body.theme-journal .card {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.5);
+    }
+
+    body.theme-journal .empty {
+      border-color: rgba(139,109,63,.12);
+      color: var(--muted);
+      background: rgba(255,255,255,.3);
+    }
+
+    body.theme-journal .toast {
+      background: linear-gradient(180deg, rgba(255,252,245,.96), rgba(250,245,235,.94));
+      border-color: rgba(139,109,63,.12);
+      color: var(--text);
+      box-shadow: 0 12px 36px rgba(80,60,30,.12);
+    }
+
+    body.theme-journal .modal-overlay {
+      background: rgba(80,60,30,.3);
+    }
+
+    body.theme-journal .modal-card {
+      background: linear-gradient(180deg, rgba(255,252,245,.98), rgba(250,245,235,.96));
+      border-color: rgba(139,109,63,.12);
+      box-shadow: 0 24px 72px rgba(80,60,30,.15);
+    }
+
+    body.theme-journal .modal-field input {
+      border-color: rgba(139,109,63,.12);
+      background: rgba(255,255,255,.6);
+      color: var(--text);
+    }
+
+    body.theme-journal .modal-field input:focus {
+      border-color: rgba(212,146,58,.36);
+      box-shadow: 0 0 0 3px rgba(212,146,58,.1);
+    }
+
+    body.theme-journal .sidebar-toggle {
+      border-color: rgba(139,109,63,.12);
+      background: linear-gradient(180deg, rgba(255,252,245,.94), rgba(250,245,235,.9));
+      color: var(--text);
+      box-shadow: 0 6px 18px rgba(80,60,30,.1);
+    }
+
+    body.theme-journal .loading-overlay {
+      background: rgba(245,239,230,.6);
+    }
+
+    body.theme-journal .spinner {
+      border-color: rgba(139,109,63,.1);
+      border-top-color: var(--gold);
+    }
+
+    body.theme-journal .stream-list::-webkit-scrollbar-thumb,
+    body.theme-journal .reader-stage::-webkit-scrollbar-thumb {
+      background: rgba(139,109,63,.15);
+    }
+
+    body.theme-journal .stream-list,
+    body.theme-journal .reader-stage {
+      scrollbar-color: rgba(139,109,63,.15) transparent;
+    }
+
+    body.theme-journal button:focus-visible,
+    body.theme-journal select:focus-visible,
+    body.theme-journal input:focus-visible,
+    body.theme-journal textarea:focus-visible {
+      outline: 2px solid rgba(212,146,58,.5);
+      outline-offset: 2px;
+    }
+
+    .desktop-mode {
+      border-radius: var(--r-xl);
+      overflow: hidden;
+      min-height: 700px;
+      display: none;
+      position: relative;
+    }
+
+    .desktop-mode.active { display: block; }
+
+    body.theme-journal .desktop-mode {
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent 120px,
+          rgba(139,109,63,.03) 120px,
+          rgba(139,109,63,.03) 121px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          transparent 0,
+          transparent 120px,
+          rgba(139,109,63,.03) 120px,
+          rgba(139,109,63,.03) 121px
+        ),
+        linear-gradient(135deg, #d4a574 0%, #c4956a 25%, #b8895e 50%, #c4956a 75%, #d4a574 100%);
+      min-height: calc(100vh - 182px);
+    }
+
+    .desk-notebook {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) rotate(-2deg);
+      width: 180px;
+      height: 240px;
+      border-radius: 6px 12px 12px 6px;
+      background:
+        linear-gradient(90deg, #8b4513 0%, #8b4513 4px, #f5e6c8 4px, #faf3e3 100%);
+      box-shadow:
+        4px 6px 16px rgba(80,60,30,.2),
+        inset -2px 0 4px rgba(139,69,19,.1);
+      z-index: 2;
+      cursor: pointer;
+      transition: transform .22s ease, box-shadow .22s ease;
+    }
+
+    .desk-notebook:hover {
+      transform: translate(-50%, -50%) rotate(-2deg) scale(1.04);
+      box-shadow: 6px 8px 24px rgba(80,60,30,.25);
+    }
+
+    .desk-notebook::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 20px;
+      right: 12px;
+      bottom: 20px;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 22px,
+          rgba(139,109,63,.12) 22px,
+          rgba(139,109,63,.12) 23px
+        );
+    }
+
+    .desk-notebook-label {
+      position: absolute;
+      left: 20px;
+      top: 28px;
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+      font-size: 14px;
+      color: #5a4a3a;
+      line-height: 1.6;
+      z-index: 1;
+    }
+
+    .sticky-note {
+      position: absolute;
+      width: var(--note-w, 140px);
+      min-height: var(--note-h, 120px);
+      padding: 14px 12px 10px;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: transform .2s ease, box-shadow .2s ease, z-index 0s;
+      z-index: var(--note-z, 1);
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+    }
+
+    .sticky-note.diary-note {
+      background: linear-gradient(180deg, #fff9c4, #fff3b0);
+      box-shadow: 2px 3px 8px rgba(80,60,30,.12);
+    }
+
+    .sticky-note.reflection-note {
+      background: linear-gradient(180deg, #e8d5f5, #dcc8f0);
+      box-shadow: 2px 3px 8px rgba(80,60,30,.12);
+    }
+
+    .sticky-note.starred-note::after {
+      content: "";
+      position: absolute;
+      top: -6px;
+      right: 8px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, #ff6b6b, #c0392b);
+      box-shadow: 0 2px 6px rgba(192,57,43,.3);
+    }
+
+    .sticky-note::before {
+      content: "";
+      position: absolute;
+      top: -4px;
+      left: var(--tape-x, 40%);
+      width: var(--tape-w, 36px);
+      height: 12px;
+      background: rgba(255,255,255,.45);
+      border: 1px solid rgba(255,255,255,.2);
+      transform: rotate(var(--tape-angle, -2deg));
+      box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    }
+
+    .sticky-note:hover {
+      transform: rotate(0deg) scale(1.06) !important;
+      box-shadow: 4px 6px 18px rgba(80,60,30,.18);
+      z-index: 20 !important;
+    }
+
+    .sticky-note-date {
+      font-size: 11px;
+      color: rgba(80,60,30,.5);
+      font-family: 'Caveat', 'KaiTi', serif;
+      letter-spacing: .04em;
+    }
+
+    .sticky-note-title {
+      margin-top: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #3d2e1e;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .sticky-note-preview {
+      margin-top: 6px;
+      font-size: 11px;
+      color: rgba(61,46,30,.6);
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .sticky-note-chip {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      background: rgba(255,255,255,.5);
+      color: rgba(61,46,30,.5);
+    }
+
+    .desk-random-btn {
+      position: absolute;
+      right: 20px;
+      bottom: 20px;
+      z-index: 12;
+      padding: 10px 16px;
+      border-radius: var(--pill);
+      border: 1px solid rgba(139,109,63,.15);
+      background: rgba(255,252,245,.85);
+      color: var(--text);
+      font-weight: 700;
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+
+    .desk-random-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(80,60,30,.12);
+    }
+
+    .desk-info {
+      position: absolute;
+      left: 20px;
+      top: 20px;
+      z-index: 12;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .desk-chip {
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: rgba(255,252,245,.82);
+      border: 1px solid rgba(139,109,63,.1);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+    }
+
+    .desk-chip strong { color: var(--text); }
+
+    .notebook-mode {
+      display: none;
+    }
+
+    .notebook-mode.active { display: grid; }
+
+    .notebook-spread {
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      gap: 0;
+      border-radius: var(--r-xl);
+      overflow: hidden;
+      min-height: 600px;
+      box-shadow: 4px 6px 24px rgba(80,60,30,.12);
+    }
+
+    .notebook-left {
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 26px,
+          rgba(139,109,63,.08) 26px,
+          rgba(139,109,63,.08) 27px
+        ),
+        linear-gradient(180deg, #faf3e3, #f5e6c8);
+      padding: 24px 20px;
+      border-right: 2px solid rgba(139,109,63,.1);
+      position: relative;
+    }
+
+    .notebook-left::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 28px;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 10px,
+          rgba(139,69,19,.15) 10px,
+          rgba(139,69,19,.15) 12px
+        );
+      border-right: 1px solid rgba(139,69,19,.08);
+    }
+
+    .notebook-right {
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 26px,
+          rgba(139,109,63,.08) 26px,
+          rgba(139,109,63,.08) 27px
+        ),
+        linear-gradient(180deg, #faf3e3, #f5e6c8);
+      padding: 24px 24px;
+      position: relative;
+    }
+
+    .notebook-right::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: rgba(139,109,63,.06);
+    }
+
+    .nb-date {
+      font-family: 'Caveat', 'KaiTi', serif;
+      font-size: 28px;
+      color: #5a4a3a;
+      margin-left: 28px;
+    }
+
+    .nb-persona {
+      margin-top: 8px;
+      margin-left: 28px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .nb-meta {
+      margin-top: 18px;
+      margin-left: 28px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .nb-meta-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--muted);
+      padding: 6px 0;
+      border-bottom: 1px dashed rgba(139,109,63,.1);
+    }
+
+    .nb-meta-item strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .nb-actions {
+      margin-top: 18px;
+      margin-left: 28px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .nb-actions button {
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+    }
+
+    .nb-content {
+      position: relative;
+      z-index: 1;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 27px;
+      font-size: 16px;
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+      color: #3d2e1e;
+      text-rendering: optimizeLegibility;
+    }
+
+    .nb-pulse {
+      border-radius: 8px;
+      border: 1px solid rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+      padding: 12px 12px 12px 16px;
+      margin-bottom: 10px;
+      position: relative;
+      animation: pageIn .36s cubic-bezier(.2,.8,.2,1);
+    }
+
+    .nb-pulse::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--violet), var(--cyan), var(--gold));
+      border-radius: 3px 0 0 3px;
+    }
+
+    .nb-pulse-time {
+      color: var(--gold);
+      font-size: 11px;
+      font-family: 'Caveat', 'KaiTi', serif;
+      letter-spacing: .04em;
+    }
+
+    .nb-pulse-text {
+      margin-top: 6px;
+      margin-left: 4px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      font-size: 13px;
+      color: #3d2e1e;
+    }
+
+    .nb-empty {
+      min-height: 300px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 22px;
+      border-radius: 12px;
+      border: 1px dashed rgba(139,109,63,.15);
+      color: var(--muted);
+      line-height: 1.9;
+      background: rgba(255,255,255,.3);
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+    }
+
+    body.theme-journal .hero::before {
+      background: radial-gradient(circle, rgba(212,146,58,.14), transparent 64%);
+    }
+
+    body.theme-journal .hero-visual {
+      border-color: rgba(139,109,63,.1);
+      background:
+        radial-gradient(circle at center, rgba(212,146,58,.1), transparent 34%),
+        radial-gradient(circle at center, rgba(90,158,124,.08), transparent 54%),
+        linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,.1));
+    }
+
+    body.theme-journal .hero-visual::before {
+      border-color: rgba(139,109,63,.12);
+      border-style: dashed;
+    }
+
+    body.theme-journal .hero-visual::after {
+      border-color: rgba(212,146,58,.15);
+    }
+
+    body.theme-journal .hero-dot.a { color: var(--gold); background: var(--gold); }
+    body.theme-journal .hero-dot.b { color: var(--violet); background: var(--violet); }
+    body.theme-journal .hero-dot.c { color: var(--cyan); background: var(--cyan); }
+
+    body.theme-journal .folio {
+      border-color: rgba(139,109,63,.1);
+      background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.25));
+    }
+
+    body.theme-journal .folio-head {
+      border-color: rgba(139,109,63,.1);
+      background: radial-gradient(circle at right top, rgba(212,146,58,.06), transparent 30%);
+    }
+
+    body.theme-journal .paper {
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 26px,
+          rgba(139,109,63,.08) 26px,
+          rgba(139,109,63,.08) 27px
+        ),
+        linear-gradient(180deg, rgba(250,243,227,.9), rgba(245,230,200,.85));
+    }
+
+    body.theme-journal .paper::before { display: none; }
+
+    body.theme-journal .content {
+      font-family: 'ZCOOL XiaoWei', 'KaiTi', serif;
+      color: #3d2e1e;
+    }
+
+    body.theme-journal .meta {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+    }
+
+    body.theme-journal .pulse {
+      border-color: rgba(139,109,63,.1);
+      background: rgba(255,255,255,.4);
+    }
+
+    @media (max-width: 1380px) {
+      .notebook-spread {
+        grid-template-columns: 1fr;
+      }
+      .notebook-left {
+        border-right: none;
+        border-bottom: 2px solid rgba(139,109,63,.1);
+      }
+    }
   </style>
 </head>
 <body>
@@ -1818,8 +2495,16 @@ class DayMindWebUI:
       </div>
 
       <div class="module">
-        <h3>界面模式</h3>
+        <h3>主题风格</h3>
         <div class="row">
+          <button id="themeGalaxy" class="active">星系</button>
+          <button id="themeJournal">手账</button>
+        </div>
+      </div>
+
+      <div class="module">
+        <h3>界面模式</h3>
+        <div class="row" id="modeButtons">
           <button id="viewOverview">观测</button>
           <button id="viewStar">星图</button>
         </div>
@@ -1909,6 +2594,31 @@ class DayMindWebUI:
           <div class="jump-flash" id="jumpFlash"></div>
         </div>
       </section>
+
+      <section class="desktop-mode glass" id="desktopMode">
+        <div class="desk-info">
+          <div class="desk-chip">人格：<strong id="deskPersonaLabel">-</strong></div>
+          <div class="desk-chip">内容：<strong id="deskModeLabel">Diary</strong></div>
+          <div class="desk-chip">窗口：<strong id="deskWindowLabel">3 天</strong></div>
+          <div class="desk-chip">便利条：<strong id="deskCountLabel">0</strong></div>
+        </div>
+        <div class="desk-notebook" id="deskNotebook">
+          <div class="desk-notebook-label" id="deskNotebookLabel">笔记本</div>
+        </div>
+        <div id="stickyField"></div>
+        <button class="desk-random-btn" id="deskRandomBtn">随机翻开</button>
+      </section>
+
+      <section class="notebook-mode" id="notebookMode">
+        <div class="notebook-spread" id="notebookSpread">
+          <div class="notebook-left" id="notebookLeft">
+            <div class="nb-empty">先从桌面模式选择一张便利条，或点击随机翻开。</div>
+          </div>
+          <div class="notebook-right" id="notebookRight">
+            <div class="nb-empty">内容将在这里展开。</div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -1918,6 +2628,7 @@ class DayMindWebUI:
     const state = {
       mode: 'diary',
       view: localStorage.getItem('daymind-view-mode') || 'overview',
+      theme: localStorage.getItem('daymind-theme') || 'galaxy',
       days: Number(localStorage.getItem('daymind-window-days') || 3),
       diaries: [],
       reflections: [],
@@ -1928,6 +2639,7 @@ class DayMindWebUI:
       activeDetail: null,
       activeStarDate: null,
       galaxyBuiltFor: '',
+      desktopBuiltFor: '',
       jumping: false,
       starredOnly: false,
       savingNote: false,
@@ -2077,19 +2789,64 @@ class DayMindWebUI:
       state.view = view;
       localStorage.setItem('daymind-view-mode', view);
       document.body.classList.toggle('star-view', view === 'star');
-      $('viewOverview').classList.toggle('active', view === 'overview');
-      $('viewStar').classList.toggle('active', view === 'star');
+      document.body.classList.toggle('desktop-view', view === 'desktop');
       $('overviewMode').classList.toggle('hidden', view !== 'overview');
       $('starMode').classList.toggle('active', view === 'star');
-      $('heroBadge').textContent = view === 'overview' ? 'Observation' : 'Star Map';
-      $('heroTitle').textContent = view === 'overview' ? '观测' : '星图';
-      $('heroQuote').textContent = view === 'overview'
-        ? '把散落的记录放回时间里。'
-        : '从轨道中随机坠入。';
-      const target = view === 'overview' ? $('overviewMode') : $('starMode');
+      $('desktopMode').classList.toggle('active', view === 'desktop');
+      $('notebookMode').classList.toggle('active', view === 'notebook');
+      updateModeButtons();
+      const isJournal = state.theme === 'journal';
+      if (isJournal) {
+        $('heroBadge').textContent = view === 'notebook' ? 'Notebook' : 'Desktop';
+        $('heroTitle').textContent = view === 'notebook' ? '笔记本' : '桌面';
+        $('heroQuote').textContent = view === 'notebook'
+          ? '翻开笔记本，阅读这一天。'
+          : '从便利条中随机翻开。';
+      } else {
+        $('heroBadge').textContent = view === 'overview' ? 'Observation' : 'Star Map';
+        $('heroTitle').textContent = view === 'overview' ? '观测' : '星图';
+        $('heroQuote').textContent = view === 'overview'
+          ? '把散落的记录放回时间里。'
+          : '从轨道中随机坠入。';
+      }
+      const target = view === 'overview' ? $('overviewMode')
+        : view === 'star' ? $('starMode')
+        : view === 'desktop' ? $('desktopMode')
+        : $('notebookMode');
       target.classList.remove('mode-transition');
       void target.offsetWidth;
       target.classList.add('mode-transition');
+    }
+
+    function updateModeButtons() {
+      const container = $('modeButtons');
+      const isJournal = state.theme === 'journal';
+      if (isJournal) {
+        container.innerHTML = `
+          <button id="viewNotebook" class="${state.view === 'notebook' ? 'active' : ''}">笔记本</button>
+          <button id="viewDesktop" class="${state.view === 'desktop' ? 'active' : ''}">桌面</button>`;
+        $('viewNotebook')?.addEventListener('click', () => setView('notebook'));
+        $('viewDesktop')?.addEventListener('click', () => { setView('desktop'); buildDesktopIfNeeded(true); });
+      } else {
+        container.innerHTML = `
+          <button id="viewOverview" class="${state.view === 'overview' ? 'active' : ''}">观测</button>
+          <button id="viewStar" class="${state.view === 'star' ? 'active' : ''}">星图</button>`;
+        $('viewOverview')?.addEventListener('click', () => setView('overview'));
+        $('viewStar')?.addEventListener('click', () => { setView('star'); buildGalaxyIfNeeded(true); });
+      }
+    }
+
+    function setTheme(theme) {
+      state.theme = theme;
+      localStorage.setItem('daymind-theme', theme);
+      document.body.classList.toggle('theme-journal', theme === 'journal');
+      $('themeGalaxy').classList.toggle('active', theme === 'galaxy');
+      $('themeJournal').classList.toggle('active', theme === 'journal');
+      if (theme === 'journal') {
+        setView(state.view === 'overview' ? 'notebook' : 'desktop');
+      } else {
+        setView(state.view === 'notebook' ? 'overview' : 'star');
+      }
     }
 
     function setMode(mode) {
@@ -2252,6 +3009,7 @@ class DayMindWebUI:
               <label class="hint">默认主题</label>
               <select id="cfgTheme">
                 <option value="galaxy" ${(cfg.webui_default_theme || status.webui_default_theme) === 'galaxy' ? 'selected' : ''}>galaxy</option>
+                <option value="journal" ${(cfg.webui_default_theme || status.webui_default_theme) === 'journal' ? 'selected' : ''}>journal</option>
               </select>
             </div>
             <div class="field">
@@ -2390,6 +3148,60 @@ class DayMindWebUI:
       updateGalaxySelection();
     }
 
+    function desktopBuildKey() {
+      return `${currentPersona()}::${state.mode}::${state.days}::${state.starredOnly}::${currentItems().map(x => `${x.persona_name || ''}@${x.date}`).join('|')}`;
+    }
+
+    function buildDesktopIfNeeded(force = false) {
+      const root = $('stickyField');
+      const items = currentItems();
+      $('deskCountLabel').textContent = String(items.length);
+      $('deskPersonaLabel').textContent = currentPersona() || '未选择';
+      $('deskModeLabel').textContent = modeLabel(state.mode);
+      $('deskWindowLabel').textContent = state.days === -1 ? '全部' : `${state.days} 天`;
+      $('deskNotebookLabel').textContent = currentPersona() || '笔记本';
+      if (!items.length) {
+        root.innerHTML = '';
+        state.desktopBuiltFor = '';
+        return;
+      }
+      const key = desktopBuildKey();
+      if (!force && state.desktopBuiltFor === key) return;
+      state.desktopBuiltFor = key;
+
+      const positions = [];
+      const stageW = root.parentElement?.offsetWidth || 800;
+      const stageH = root.parentElement?.offsetHeight || 600;
+      const noteW = 140;
+      const noteH = 120;
+
+      root.innerHTML = items.map((item, i) => {
+        const cols = Math.max(3, Math.floor(stageW / 170));
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+        const baseX = 40 + col * 170 + (row % 2 === 0 ? 0 : 30);
+        const baseY = 80 + row * 150;
+        const rotation = (Math.sin(i * 2.7) * 6).toFixed(1);
+        const tapeX = (30 + (i * 17) % 40) + '%';
+        const tapeAngle = ((Math.sin(i * 3.1) * 4) - 2).toFixed(1) + 'deg';
+        const noteClass = state.mode === 'diary' ? 'diary-note' : 'reflection-note';
+        const starredClass = item.starred ? 'starred-note' : '';
+        return `<div class="sticky-note ${noteClass} ${starredClass}" data-date="${item.date}" data-persona="${esc(item.persona_name || currentPersona() || '')}" style="left:${baseX}px;top:${baseY}px;transform:rotate(${rotation}deg);--note-z:${i + 1};--tape-x:${tapeX};--tape-angle:${tapeAngle};">
+          <div class="sticky-note-date">${esc(item.date)}</div>
+          <div class="sticky-note-title">${esc(item.persona_name || '未知人格')} · ${modePrimaryLabel(state.mode)}</div>
+          <div class="sticky-note-preview">${esc(item.preview || '（无预览）')}</div>
+          <span class="sticky-note-chip">${state.mode === 'diary' ? (item.length + ' 字') : (item.count + ' 条')}</span>
+        </div>`;
+      }).join('');
+
+      root.querySelectorAll('.sticky-note').forEach(note => {
+        note.addEventListener('click', () => {
+          openDetail(note.dataset.date, false, false, note.dataset.persona || currentPersona());
+          setView('notebook');
+        });
+      });
+    }
+
     async function loadConfig() {
       const res = await api('/api/config');
       state.config = res.data || {};
@@ -2415,6 +3227,7 @@ class DayMindWebUI:
       renderStatus();
       renderList();
       buildGalaxyIfNeeded(true);
+      buildDesktopIfNeeded(true);
       renderSidePanel();
 
       if (selected) {
@@ -2558,11 +3371,51 @@ class DayMindWebUI:
       state.activeStarDate = date;
       updateGalaxySelection();
 
+      if (state.theme === 'journal') {
+        renderNotebookContent();
+      }
+
       if (fromStar && !silentRefresh) {
         document.querySelector('.hero, .workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
       } finally {
         hideLoading(loader);
+      }
+    }
+
+    function renderNotebookContent() {
+      const d = state.activeDetail;
+      if (!d) {
+        $('notebookLeft').innerHTML = '<div class="nb-empty">先从桌面模式选择一张便利条，或点击随机翻开。</div>';
+        $('notebookRight').innerHTML = '<div class="nb-empty">内容将在这里展开。</div>';
+        return;
+      }
+      const isDiary = state.mode === 'diary';
+      $('notebookLeft').innerHTML = `
+        <div class="nb-date">${esc(d.date)}</div>
+        <div class="nb-persona">${esc(d.persona_name || currentPersona() || '未知人格')} · ${isDiary ? '日记档案' : '思考脉冲'}</div>
+        <div class="nb-meta">
+          <div class="nb-meta-item"><span>类型</span><strong>${isDiary ? 'Diary' : 'Pulse'}</strong></div>
+          <div class="nb-meta-item"><span>日期</span><strong>${esc(d.date)}</strong></div>
+          ${isDiary ? `<div class="nb-meta-item"><span>更新</span><strong>${fmt(d.updated_at)}</strong></div>` : `<div class="nb-meta-item"><span>记录数</span><strong>${d.count} 条</strong></div>`}
+          <div class="nb-meta-item"><span>星标</span><strong>${d.starred ? '★ 已星标' : '☆ 未星标'}</strong></div>
+        </div>
+        <div class="nb-actions">
+          <button id="nbToggleStar" class="${d.starred ? 'active' : 'btn-soft'}">${d.starred ? '★ 已星标' : '☆ 添加星标'}</button>
+          <button id="nbBackDesktop" class="btn-soft">返回桌面</button>
+        </div>`;
+      $('nbToggleStar')?.addEventListener('click', toggleStarred);
+      $('nbBackDesktop')?.addEventListener('click', () => setView('desktop'));
+
+      if (isDiary) {
+        $('notebookRight').innerHTML = `<div class="nb-content">${esc(d.content || '（空）')}</div>`;
+      } else {
+        $('notebookRight').innerHTML = (d.items || []).map((item, idx) => `
+          <div class="nb-pulse" style="animation-delay:${idx * 20}ms">
+            <div class="nb-pulse-time">${esc(item.time || '')}</div>
+            <div class="nb-pulse-text">${esc(item.content || '')}</div>
+          </div>
+        `).join('') || '<div class="nb-empty">这一天没有可展示的思考脉冲。</div>';
       }
     }
 
@@ -2592,17 +3445,31 @@ class DayMindWebUI:
     async function init() {
       await loadConfig();
       await loadStatus();
-      setView(state.config?.webui_default_mode || state.view || 'overview');
+      const savedTheme = state.config?.webui_default_theme || state.theme;
+      setTheme(savedTheme === 'journal' ? 'journal' : 'galaxy');
+      const defaultView = state.config?.webui_default_mode || state.view;
+      if (state.theme === 'journal') {
+        setView(defaultView === 'star' || defaultView === 'desktop' ? 'desktop' : 'notebook');
+      } else {
+        setView(defaultView === 'overview' ? 'overview' : 'star');
+      }
       setDays(state.days);
       setMode('diary');
       renderSidePanel();
     }
 
-    $('viewOverview').addEventListener('click', () => setView('overview'));
-    $('viewStar').addEventListener('click', () => { setView('star'); buildGalaxyIfNeeded(true); });
+    $('themeGalaxy').addEventListener('click', () => setTheme('galaxy'));
+    $('themeJournal').addEventListener('click', () => setTheme('journal'));
     $('tabDiary').addEventListener('click', () => setMode('diary'));
     $('tabReflection').addEventListener('click', () => setMode('reflection'));
     $('randomEnter').addEventListener('click', () => enterFromStar());
+    $('deskRandomBtn').addEventListener('click', async () => {
+      const items = currentItems();
+      if (!items.length) return;
+      const chosen = pick(items);
+      await openDetail(chosen.date, false, false, chosen.persona_name || currentPersona());
+      setView('notebook');
+    });
     $('searchInput').addEventListener('input', renderList);
     $('starredOnlyBtn').addEventListener('click', async () => {
       state.starredOnly = !state.starredOnly;
