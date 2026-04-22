@@ -1,26 +1,16 @@
+### v1.3.7
+
+**🐛 修复 Provider 获取逻辑 & 日记 Fallback 机制**
+
+* 修复 `ReflectionGenerator._get_default_provider_id()` 和 `DiaryGenerator._get_default_provider_id()`：原来使用 `context.config.get("provider", [])` 获取 provider 列表不可靠，改为使用 `context.get_using_provider()` + `provider.meta().id`（与 DayFlow 修复方式一致）。
+* 为 `DiaryGenerator` 新增 `_call_llm_with_fallback()` 方法，日记生成支持 provider fallback：当配置的 `diary_provider_id` 失败时，自动回退到默认 provider。
+* 思考生成本身不需要 fallback（用户明确决策）。
+
+---
+
 ### v1.3.6
 
-**🧠 思考流抗同质化与心情衰减系统**
-
-**1. 🎯 思考提示词优化 — 场景锚定与情绪缓冲**
-
-* 新增「场景锚定优先」规则：思考必须优先聚焦当前活动的具体体感、动作细节、环境互动，禁止脱离场景飘向"等待消息""回想过去"。
-* 升级「最近思考防污染」规则：若最近 2 条思考的情绪主题与本轮高度重合，提示模型尝试引入新角度（环境细节、身体动作、小观察），但不强行切换不自然的情绪。
-* 新增情绪多样性提示：当检测到最近 2 条思考情绪标签相同时，自动追加缓冲提示，引导模型换角度表达。
-
-**2. 📉 心情基线与衰减机制**
-
-* 新增心情衰减路径映射（如 期待→安心→平静，紧张→烦躁→平静）。
-* 每天初始化时自动从昨日日记结尾提取心情基线。
-* 当前心情每隔 60 分钟沿衰减路径向基线回归一步，避免情绪长期悬在极端状态。
-* 新增 `mood_baseline` 和 `last_mood_decay_time` 状态字段。
-
-**3. 🔧 可调参数**
-
-* `MOOD_DECAY_INTERVAL_MINUTES = 60`：心情衰减间隔（分钟）。
-* `MOOD_DECAY_PATHS`：9 条衰减路径，可按需扩展。
-
-**4. 🌙 智能静默时段（DayFlow 联动）**
+**🌙 智能静默时段（DayFlow 联动）**
 
 * 新增「智能静默时段」配置项 `smart_silent_hours`，开启后自动从 DayFlow 日程的 timeline 中提取睡眠时段结束时间作为静默结束时间。
 * 核心逻辑：读取日程 timeline 的第一个时段（睡眠时段），取其 `time_end` 作为静默结束时间，无需手动配置。

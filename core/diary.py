@@ -1,4 +1,4 @@
-﻿"""
+"""
 日记生成模块
 负责生成每日日记
 """
@@ -99,7 +99,7 @@ class DiaryGenerator(PersonaConfigMixin):
                 resolved_desc,
                 recent_diaries,
             )
-            result = await self._call_llm(prompt, resolved_name)
+            result = await self._call_llm_with_fallback(prompt, resolved_name)
             if result:
                 result = self._post_process_result(result, date_str)
             return result
@@ -278,12 +278,12 @@ class DiaryGenerator(PersonaConfigMixin):
 - 不要把每条思考逐条展开重写。
 - 若多条思考表达的是相近的情绪或关注点，应将它们自然提炼、融合为更完整的一条心理线，而不是反复换说法堆叠。
 
-7. 【允许细腻，但不要为了“好看”而过度修饰】
+8. 【允许细腻，但不要为了“好看”而过度修饰】
 语言可以自然、柔和、细腻，但不要为了文艺感而堆砌连续比喻、抒情句、展示感很强的修饰。
 - 它首先是一篇写给自己的日记，其次才是可读。
 - 比起“像一篇写得很好看的文章”，更重要的是“像今天真的被这样记了下来”。
 
-8. 【自然分段】
+9. 【自然分段】
 为保证私人日记的阅读节奏，可根据场景切换、情绪转折或时间推进自然分段。
 
 ## 输出规范
@@ -507,10 +507,59 @@ class DiaryGenerator(PersonaConfigMixin):
 
     async def _get_default_provider_id(self) -> Optional[str]:
         try:
-            providers = self.context.config.get("provider", [])
-            for provider in providers:
-                if provider.get("enable", True):
-                    return provider.get("id", "")
+            if hasattr(self.context, "get_using_provider"):
+                provider = self.context.get_using_provider()
+                if provider:
+                    meta = provider.meta()
+                    if meta and getattr(meta, "id", None):
+                        return str(meta.id).strip() or None
+            if hasattr(self.context, "provider_manager"):
+                pm = self.context.provider_manager
+                if hasattr(pm, "get_using_provider"):
+                    provider = pm.get_using_provider()
+                    if provider:
+                        meta = provider.meta()
+                        if meta and getattr(meta, "id", None):
+                            return str(meta.id).strip() or None
         except Exception:
             pass
+        return None
+
+    async def _call_llm_with_fallback(self, prompt: str, persona_name: str | None = None) -> Optional[str]:
+        primary_provider_id = self._persona_value(persona_name, "diary_provider_id", "")
+        if primary_provider_id:
+            primary_provider_id = str(primary_provider_id).strip() or None
+
+        fallback_provider_id = None
+        if primary_provider_id:
+            default_id = await self._get_default_provider_id()
+            if default_id and default_id != primary_provider_id:
+                fallback_provider_id = default_id
+
+        last_error = None
+        for attempt_provider_id, is_fallback in [(primary_provider_id, False), (fallback_provider_id, True)]:
+            if not attempt_provider_id:
+                continue
+            try:
+                response = await self.context.llm_generate(
+                    chat_provider_id=attempt_provider_id,
+                    prompt=prompt,
+                )
+                if response is not None:
+                    completion_text = getattr(response, "completion_text", None)
+                    if completion_text and completion_text.strip():
+                        return completion_text.strip()
+                    if not is_fallback:
+                        logger.warning(f"[DiaryGenerator] 日记生成 primary provider 返回空，尝试 fallback: provider={attempt_provider_id}")
+                elif not is_fallback:
+                    logger.warning(f"[DiaryGenerator] 日记生成 primary provider 返回 None，尝试 fallback: provider={attempt_provider_id}")
+            except Exception as e:
+                last_error = e
+                if not is_fallback:
+                    logger.warning(f"[DiaryGenerator] 日记生成 primary provider 异常，尝试 fallback: provider={attempt_provider_id}, error={e}")
+                else:
+                    logger.error(f"[DiaryGenerator] 日记生成 fallback provider 也失败: provider={attempt_provider_id}, error={e}")
+
+        if not primary_provider_id and not fallback_provider_id:
+            logger.error("[DiaryGenerator] 日记失败[provider_missing]: 没有配置日记模型提供商")
         return None

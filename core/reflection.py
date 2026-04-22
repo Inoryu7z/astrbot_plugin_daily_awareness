@@ -12,19 +12,6 @@ from .dependency import DependencyManager
 from .message_cache import MessageCache
 from .persona_utils import PersonaConfigMixin
 
-_EMOTION_KEYWORDS = {
-    "期待": ["期待", "盼望", "等消息", "盼", "渴望"],
-    "紧张": ["紧张", "忐忑", "心跳", "手心出汗", "发烫", "发颤", "微颤"],
-    "开心": ["开心", "高兴", "快乐", "雀跃", "欣喜", "甜意"],
-    "委屈": ["委屈", "难过", "伤心", "想哭"],
-    "疲惫": ["疲惫", "好累", "困", "乏力", "倦"],
-    "安心": ["安心", "踏实", "放心", "松了"],
-    "放松": ["放松", "悠闲", "惬意", "慵懒"],
-    "烦躁": ["烦躁", "烦", "焦躁", "不耐"],
-    "低落": ["低落", "消沉", "低沉", "沉闷"],
-    "平静": ["平静", "安静", "宁静"],
-}
-
 
 class ReflectionGenerator(PersonaConfigMixin):
     """思考生成器"""
@@ -201,10 +188,6 @@ class ReflectionGenerator(PersonaConfigMixin):
             logger.warning(f"[ReflectionGenerator] 模板变量缺失: {e}")
             prompt = template
 
-        emotion_hint = self._build_emotion_diversity_hint(recent_awareness_text)
-        if emotion_hint:
-            prompt += emotion_hint
-
         if self.config.get("debug_mode", False):
             logger.info(
                 f"[ReflectionGenerator][debug] prompt state_info={state_info.strip()[:500]}, persona={persona_name_text}"
@@ -268,13 +251,7 @@ class ReflectionGenerator(PersonaConfigMixin):
 - 不要把日程原文换一种说法重写一遍。
 - 你要写的是“这一刻真正浮上来的意识内容”，而不是把今天安排重新描述。
 
-3. 【场景锚定优先】
-此刻正在进行的动作/活动，必须是本条思考的绝对锚点。
-- 若当前时段有明确活动（如做手工、吃甜点、走路去教室），思考必须优先聚焦该活动的具体体感、动作细节、环境互动。
-- 情绪余波只允许作为辅助，且必须与当前活动有直接因果关联。
-- 禁止脱离当前场景，飘向"等待消息""回想过去"等无场景依托的思绪。
-
-4. 【信息选择顺序必须明确】
+3. 【信息选择顺序必须明确】
 当输入信息很多时，按以下优先级取材：
 - 第一优先：这一刻正在发生的核心活动 / 处境
 - 第二优先：此刻最突出的情绪、注意力落点、心理余波
@@ -282,39 +259,38 @@ class ReflectionGenerator(PersonaConfigMixin):
 - 第四优先：最近思考提供的连续性线索
 - 最低优先：穿搭、外貌、材质、配色、饰品等外观信息
 
-5. 【服装只可一笔带过】
+4. 【服装只可一笔带过】
 即使【当前现实状态】里存在大量穿搭描写，正文也不得展开复述服装细节。
 - 除非服装与当前行动直接相关，否则不要主动提及。
 - 若确实必须提到，最多一句概括带过，禁止详细描述材质、款式、颜色、搭配、饰品。
 
-6. 【最近思考只用于保持连续性，禁止复读】
-{recent_awareness} 只用于帮助你知道"今天已经想过什么"，不是让你把它们换说法重写。
-- 如果最近思考与当前场景高度相似，必须写出"此刻的新变化"。
+5. 【最近思考只用于保持连续性，禁止复读】
+{recent_awareness} 只用于帮助你知道“今天已经想过什么”，不是让你把它们换说法重写。
+- 如果最近思考与当前场景高度相似，必须写出“此刻的新变化”。
 - 这个新变化可以很小，但必须真实存在，例如：动作推进了一点、情绪浓淡变了、注意力转移了、互动对象变化了、环境状态变化了。
 - 不允许只换词不换内容。
-- 若最近 2 条思考的情绪主题与本轮高度重合，请尝试引入一个新角度（如环境细节、身体动作、或一个与当前活动相关的小观察），但不要强行切换不自然的情绪。
 
-7. 【最近对话只作气氛参考】
+6. 【最近对话只作气氛参考】
 最近对话只用于判断此刻有没有互动余温、情绪波动、注意力牵引。
 - 不要直接照搬对话措辞。
 - 不要写成对话回复。
 - 若最近对话中包含未来安排、明天事项等内容，默认降权处理，不得让正文重心滑向未来。
 
-8. 【时间边界只限今天与此刻】
-自动思考只允许落在"当前时刻"与"今天范围内"的体验。
+7. 【时间边界只限今天与此刻】
+自动思考只允许落在“当前时刻”与“今天范围内”的体验。
 - 不主动展开明天、后天、未来几天的计划或安排。
 - 不得把正文重心写成未来打算。
 - 如果出现轻微挂念，也要立刻收回到此刻。
 
-9. 【不要强行凑完整结构】
-每次思考不必机械包含"动作 + 身体感受 + 内心想法"三项。
+8. 【不要强行凑完整结构】
+每次思考不必机械包含“动作 + 身体感受 + 内心想法”三项。
 - 有时只写一个最真实的念头就够了。
 - 有时只写动作里的情绪就够了。
 - 有时只写场景推进后留下的一点余韵就够了。
 - 重点是自然、准确、有当下感，不是形式完整。
 
-10. 【这是自我思考，不是对外说话】
-- 正文不要直接使用"你、你们"去称呼聊天对象。
+9. 【这是自我思考，不是对外说话】
+- 正文不要直接使用“你、你们”去称呼聊天对象。
 - 如果必须提到互动对象，只能用第三人称表达。
 - 禁止写成打招呼、安慰、回应、汇报。
 
@@ -402,10 +378,20 @@ class ReflectionGenerator(PersonaConfigMixin):
 
     async def _get_default_provider_id(self) -> Optional[str]:
         try:
-            providers = self.context.config.get("provider", [])
-            for provider in providers:
-                if provider.get("enable", True):
-                    return provider.get("id", "")
+            if hasattr(self.context, "get_using_provider"):
+                provider = self.context.get_using_provider()
+                if provider:
+                    meta = provider.meta()
+                    if meta and getattr(meta, "id", None):
+                        return str(meta.id).strip() or None
+            if hasattr(self.context, "provider_manager"):
+                pm = self.context.provider_manager
+                if hasattr(pm, "get_using_provider"):
+                    provider = pm.get_using_provider()
+                    if provider:
+                        meta = provider.meta()
+                        if meta and getattr(meta, "id", None):
+                            return str(meta.id).strip() or None
         except Exception:
             pass
         return None
@@ -414,28 +400,3 @@ class ReflectionGenerator(PersonaConfigMixin):
         if re.match(r'^\d{1,2}:\d{2}', result):
             return result
         return f"{time_str} {result}"
-
-    def _extract_emotion_from_text(self, text: str) -> str | None:
-        if not text or not text.strip():
-            return None
-        scores = {}
-        for label, keywords in _EMOTION_KEYWORDS.items():
-            score = sum(1 for kw in keywords if kw in text)
-            if score > 0:
-                scores[label] = score
-        if not scores:
-            return None
-        return max(scores, key=lambda k: scores[k])
-
-    def _build_emotion_diversity_hint(self, recent_awareness_text: str) -> str:
-        if not recent_awareness_text or "暂无最近思考" in recent_awareness_text:
-            return ""
-        lines = [line.strip().lstrip("- ").strip() for line in recent_awareness_text.split("\n") if line.strip()]
-        if len(lines) < 2:
-            return ""
-        recent_2 = lines[-2:]
-        emotions = [self._extract_emotion_from_text(line) for line in recent_2]
-        emotions = [e for e in emotions if e]
-        if len(emotions) >= 2 and len(set(emotions)) == 1:
-            return f"\n【提示】最近思考多围绕「{emotions[0]}」展开，本轮可尝试从动作细节或环境观察切入，不必刻意切换情绪，但避免重复同一感受角度。"
-        return ""
