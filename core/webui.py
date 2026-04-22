@@ -3077,10 +3077,13 @@ class DayMindWebUI:
       $('starModeLabel').textContent = modeLabel(mode);
       state.activeStarDate = null;
       state.galaxyBuiltFor = '';
+      state.desktopBuiltFor = '';
       renderList();
       renderEmpty();
       renderSidePanel();
       buildGalaxyIfNeeded(true);
+      buildDesktopIfNeeded(true);
+      if (state.theme === 'journal') renderNotebookContent();
     }
 
     function setDays(days) {
