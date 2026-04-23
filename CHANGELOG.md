@@ -10,7 +10,7 @@
 * 梦境历史持久化存储到 `data/dreams/` 目录
 * 新增配置项：`enable_dream`（启用梦境）、`dream_count_range`（每夜数量范围）、`dream_provider_id`（梦境模型提供商）
 * 梦境 Prompt 与清醒思考完全独立，强调感官化、碎片化、情感驱动
-* 新增公开接口：`get_dream_history(persona_name, date)` 和 `get_dream_aftereffect_for_persona(persona_name)`，供其他插件（如 DailySharing）读取梦境数据
+* 新增公开接口：`get_dream_history(persona_name, date)` 和 `get_dream_aftereffect_for_persona(persona_name)`，供其他插件（如 DailySharing Inoryu7z 版）读取梦境数据
 
 ---
 
