@@ -1,3 +1,15 @@
+### v1.5.2
+
+**🔧 稳定性修复：竞态条件 + 异步I/O + 梦境注入 + 状态清理**
+
+* 修复 `_save_state` 竞态条件：`_state_save_pending` 标志位的检查与修改移入锁保护范围
+* 修复同步文件 I/O 阻塞事件循环：`_save_state` 改为 async，通过 `asyncio.to_thread` 执行文件写入
+* 修复梦境记忆重复注入风险：`get_dream_memory_for_session/persona` 新增 `mark_shared` 参数，检查与标记原子化
+* 修复 `persona_states` 无清理机制：`restore_persona_states` 跳过未启用人格的状态恢复
+* 新增 `.gitignore` 排除 `__pycache__` 和本地交接文档
+
+---
+
 ### v1.5.1
 
 **🧠 思考质量优化：日程对齐 + 差异化强制**

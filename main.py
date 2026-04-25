@@ -137,7 +137,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
             max_sessions=max_sessions,
         )
 
-    def _touch_session_persona(self, session_id: str | None, persona_name: str | None = None, persist: bool = False):
+    async def _touch_session_persona(self, session_id: str | None, persona_name: str | None = None, persist: bool = False):
         session_key = str(session_id or "").strip()
         if not session_key:
             return
@@ -149,7 +149,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
             self.session_persona_activity_map[session_key] = datetime.datetime.now().isoformat()
         self._prune_session_persona_state()
         if persist:
-            self._save_state()
+            await self._save_state()
 
     async def initialize(self):
         version_time = f"{PLUGIN_VERSION}"
@@ -212,7 +212,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
                 logger.warning(f"[DayMind] 停止 WebUI 失败: {e}")
         if self.scheduler:
             await self.scheduler.stop()
-        self._save_state()
+        await self._save_state()
 
     def _is_debug_mode(self) -> bool:
         return bool(self.config.get("debug_mode", False))
@@ -276,10 +276,11 @@ class DayMindPlugin(Star, PersonaConfigMixin):
             "persona_states": self.scheduler.export_persona_states() if self.scheduler else {},
         }
 
-    def _save_state(self):
-        if self._state_save_pending:
-            return
-        self._state_save_pending = True
+    def _do_save_state(self):
+        with self._state_write_lock:
+            if self._state_save_pending:
+                return
+            self._state_save_pending = True
         try:
             Path(self.data_dir).mkdir(parents=True, exist_ok=True)
             data = self._build_persist_payload()
@@ -291,22 +292,29 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         except Exception as e:
             logger.error(f"[DayMind] 保存状态失败: {e}")
         finally:
-            self._state_save_pending = False
+            with self._state_write_lock:
+                self._state_save_pending = False
+
+    async def _save_state(self):
+        await asyncio.to_thread(self._do_save_state)
+
+    def _save_state_sync(self):
+        self._do_save_state()
 
     def save_runtime_state(self):
-        self._save_state()
+        self._save_state_sync()
 
     def persist_runtime_config(self, updates: dict):
         if self.scheduler:
             self.scheduler.load_runtime_config(updates or {})
-        self._save_state()
+        self._save_state_sync()
 
     async def _resolve_persona_name_for_session(self, session_id: str) -> str | None:
         try:
             ctx = await self.dependency_manager.resolve_persona_context(session_id)
             persona_name = self._canonical_persona_name(ctx.get("persona_name") or ctx.get("persona_id"))
             if persona_name:
-                self._touch_session_persona(session_id, persona_name)
+                await self._touch_session_persona(session_id, persona_name)
                 return persona_name
         except Exception as e:
             logger.debug(f"[DayMind] 解析人格失败: {e}")
@@ -377,7 +385,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         persona_name = self._canonical_persona_name(persona_ctx.get("persona_name") or persona_ctx.get("persona_id"))
         persona_desc = persona_ctx.get("persona_desc")
         if persona_name:
-            self._touch_session_persona(session_id, persona_name)
+            await self._touch_session_persona(session_id, persona_name)
         return session_id, persona_name, persona_desc
 
     @filter.on_llm_request()
@@ -417,14 +425,12 @@ class DayMindPlugin(Star, PersonaConfigMixin):
                                 f"[DayMind][debug] 注入心情到回复: session={event.unified_msg_origin}, current={mood.get('label', '未知')}, previous={(mood.get('previous_mood') or {}).get('label', '无')}, sub_labels={mood.get('sub_labels', [])}"
                             )
 
-            dream_memory = self.scheduler.get_dream_memory_for_session(event.unified_msg_origin)
+            dream_memory = self.scheduler.get_dream_memory_for_session(event.unified_msg_origin, mark_shared=True)
             if dream_memory:
                 req.system_prompt += f"\n\n### 梦境记忆\n你昨晚做了一个梦：{dream_memory}\n如果对话自然地涉及到相关话题，你可以选择提及这个梦，但不要强行插入。"
-                persona_name = self.session_persona_map.get(event.unified_msg_origin)
-                if persona_name:
-                    self.scheduler.mark_dream_shared(persona_name)
-                    if self._is_debug_mode():
-                        logger.info(f"[DayMind][debug] 注入梦境记忆: session={event.unified_msg_origin}, persona={persona_name}")
+                if self._is_debug_mode():
+                    persona_name = self.session_persona_map.get(event.unified_msg_origin)
+                    logger.info(f"[DayMind][debug] 注入梦境记忆: session={event.unified_msg_origin}, persona={persona_name}")
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp):
@@ -652,7 +658,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
 
         yield event.plain_result("正在思考...")
         result = await self.scheduler.run_manual_reflection(session_id, persona_name, persona_desc)
-        self._save_state()
+        await self._save_state()
 
         if result.get("status") == "duplicate":
             yield event.plain_result(f"思考完成，但与近期内容过于相似，未更新状态。\n结果：\n{result.get('text', '')}")
@@ -687,7 +693,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         yield event.plain_result("正在生成日记...")
 
         result = await self.scheduler.run_manual_diary(session_id, persona_name, persona_desc)
-        self._save_state()
+        await self._save_state()
 
         if result.get("status") == "failed_schedule":
             yield event.plain_result(f"今日日程不可用，已取消本次日记生成：{result.get('message') or '未知原因'}")
@@ -734,7 +740,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
             return
 
         result = await self.scheduler.reset_today_reflections(persona_name)
-        self._save_state()
+        await self._save_state()
         yield event.plain_result(
             f"已清空今日思考流。\n"
             f"人格: {result['persona_name']}\n"

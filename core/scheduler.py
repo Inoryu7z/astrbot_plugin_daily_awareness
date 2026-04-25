@@ -99,7 +99,9 @@ class AwarenessScheduler(PersonaConfigMixin):
         if not callback:
             return
         try:
-            callback()
+            result = callback()
+            if asyncio.iscoroutine(result):
+                asyncio.ensure_future(result)
         except Exception as e:
             logger.warning(f"[Scheduler] 持久化运行状态失败: {e}")
 
@@ -304,11 +306,15 @@ class AwarenessScheduler(PersonaConfigMixin):
 
     def restore_persona_states(self, saved: dict[str, Any]):
         self.persona_states = {}
+        enabled = set(self._enabled_personas())
         for persona_name, state in (saved or {}).items():
             if not isinstance(state, dict):
                 continue
             canonical_name = self._canonical_persona_name(persona_name)
             if not canonical_name:
+                continue
+            if canonical_name not in enabled:
+                logger.debug(f"[Scheduler] 跳过未启用人格的状态恢复: {canonical_name}")
                 continue
             item = self._ensure_persona_state(canonical_name)
             state_date = str(state.get("state_date") or "").strip()
@@ -1569,16 +1575,16 @@ class AwarenessScheduler(PersonaConfigMixin):
         logger.info(f"[Scheduler] 醒来: persona={persona_name}, 今晚{len(tonight_dreams)}个梦")
         self._persist_state()
 
-    def get_dream_memory_for_session(self, session_id: str | None) -> str | None:
+    def get_dream_memory_for_session(self, session_id: str | None, mark_shared: bool = False) -> str | None:
         if not session_id:
             return None
         self._touch_session_persona(session_id)
         persona_name = self._canonical_persona_name(self.session_persona_map.get(session_id))
         if not persona_name:
             return None
-        return self.get_dream_memory_for_persona(persona_name)
+        return self.get_dream_memory_for_persona(persona_name, mark_shared=mark_shared)
 
-    def get_dream_memory_for_persona(self, persona_name: str | None) -> str | None:
+    def get_dream_memory_for_persona(self, persona_name: str | None, mark_shared: bool = False) -> str | None:
         normalized = self._canonical_persona_name(persona_name)
         if not normalized:
             return None
@@ -1588,7 +1594,10 @@ class AwarenessScheduler(PersonaConfigMixin):
         dream_state = state.get("dream_state", {})
         if dream_state.get("dream_shared"):
             return None
-        return dream_state.get("dream_memory")
+        memory = dream_state.get("dream_memory")
+        if memory and mark_shared:
+            dream_state["dream_shared"] = True
+        return memory
 
     def mark_dream_shared(self, persona_name: str | None):
         normalized = self._canonical_persona_name(persona_name)
