@@ -11,6 +11,8 @@ from .silent_hours import SilentHoursChecker
 from .webui import DayMindWebUI
 from .mood import MoodManager
 from .persona_utils import PersonaConfigMixin
+from .dream_ops import DreamOperations
+from .diary_ops import DiaryOperations
 
 __all__ = [
     "AwarenessScheduler",
@@ -24,4 +26,6 @@ __all__ = [
     "DayMindWebUI",
     "MoodManager",
     "PersonaConfigMixin",
+    "DreamOperations",
+    "DiaryOperations",
 ]

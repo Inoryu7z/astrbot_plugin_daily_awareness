@@ -86,6 +86,16 @@ DayMind 支持在指定时间自动生成今日日记。
 - 哪些念头值得被留下来
 - 这个人格会怎样理解今天
 
+### 🖼️ 日记图片渲染
+
+DayMind 支持将日记渲染为纸质手写风格的图片发送，而非纯文字。
+
+- 暖色米白纸张纹理 + 手写体正文 + 装饰线
+- 自动下载中文字体，支持国内镜像回退
+- 渲染失败时自动回退到纯文字发送
+
+通过人格级配置 `enable_diary_image` 开启。
+
 ### 🔗 自动补全链路
 
 DayMind 支持在思考或日记生成前，自动检测今日日程是否存在。
@@ -219,6 +229,7 @@ DayFlow 可以读取 DayMind 的心情状态，用于：
 - `diary_reference_count`：参考历史日记篇数
 - `diary_provider_id`：日记使用的模型提供商
 - `diary_prompt_template`：日记提示词模板
+- `enable_diary_image`：是否启用日记图片渲染（人格级配置，默认关闭）
 - `store_diary_to_memory`：是否写入 LivingMemory
 - `diary_push_targets`：日记主动推送目标列表
 - `allow_overwrite_today_diary`：是否允许重复生成今日日记

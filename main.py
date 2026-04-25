@@ -63,6 +63,7 @@ class DayMindPlugin(Star, PersonaConfigMixin):
         self.reflection_generator: Optional[ReflectionGenerator] = None
         self.diary_generator: Optional[DiaryGenerator] = None
         self.dream_generator: Optional[DreamGenerator] = None
+        self.diary_renderer: Optional[DiaryRenderer] = None
         self.mood_manager: Optional[MoodManager] = None
         self.scheduler: Optional[AwarenessScheduler] = None
         self.webui: Optional[DayMindWebUI] = None
