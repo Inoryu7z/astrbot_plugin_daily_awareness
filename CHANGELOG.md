@@ -1,3 +1,13 @@
+### v1.6.2
+
+** 修复 ensure_today_schedule 日程未持久化的严重 bug**
+
+* 修复 dependency.py 中 ensure_today_schedule 调用 service.save_generated(store_key, generated) 缺少 wait
+* save_generated 是 async 方法，缺少 wait 导致协程被创建但从未执行，自动补生成的日程从未持久化到 DayFlow 存储
+* 直接后果：DayMind 思考时读到的日程可能是旧的/不存在的
+
+---
+
 ### v1.6.1
 
 **🏗️ 架构重构 + 日记渲染优化 + 梦境历史清理**

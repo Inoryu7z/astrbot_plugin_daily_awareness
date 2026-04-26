@@ -317,7 +317,7 @@ class DependencyManager:
                 if generated.get("meta", {}).get("error"):
                     result["message"] = generated.get("memo") or "自动补生成目标日期日程失败"
                     return result
-                service.save_generated(store_key, generated)
+                await service.save_generated(store_key, generated)
             finally:
                 await service.exit_generation(store_key)
 
