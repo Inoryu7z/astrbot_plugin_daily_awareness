@@ -102,6 +102,107 @@ class ReflectionGenerator(PersonaConfigMixin):
             "current_slot": slots[current_idx] if current_idx >= 0 else None,
         }
 
+    def _format_timeline_slot(self, slot: dict) -> str:
+        start = str(slot.get("time_start", ""))
+        end = str(slot.get("time_end", ""))
+        title = str(slot.get("title", ""))
+        detail = str(slot.get("detail", ""))
+        text = f"{start}-{end} {title}"
+        if detail:
+            text += f"\n{detail}"
+        return text
+
+    def _extract_sub_events_text(self, sub_events, current_timeline_idx: int, current_min: int) -> str:
+        if not sub_events or not isinstance(sub_events, list):
+            return ""
+        target_block = None
+        for block in sub_events:
+            if not isinstance(block, dict):
+                continue
+            if block.get("source_index") == current_timeline_idx:
+                target_block = block
+                break
+        if not target_block:
+            return ""
+        items = target_block.get("items", [])
+        if not items:
+            return ""
+        parts = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            start = str(item.get("time_start", ""))
+            end = str(item.get("time_end", ""))
+            title = str(item.get("title", ""))
+            detail = str(item.get("detail", ""))
+            item_start_min = self._parse_time_to_minutes(start)
+            item_end_min = self._parse_time_to_minutes(end)
+            is_current = item_start_min >= 0 and item_end_min >= 0 and item_start_min <= current_min < item_end_min
+            marker = " ←此刻" if is_current else ""
+            line = f"  {start}-{end} {title}{marker}"
+            if detail:
+                line += f"\n    {detail}"
+            parts.append(line)
+        return "\n".join(parts)
+
+    def _build_enhanced_slot_text(self, schedule_data: dict, current_time_str: str) -> str:
+        timeline = schedule_data.get("timeline")
+        if not timeline or not isinstance(timeline, list):
+            return ""
+        current_min = self._parse_time_to_minutes(current_time_str)
+        if current_min < 0:
+            return ""
+        current_idx = -1
+        for i, slot in enumerate(timeline):
+            if not isinstance(slot, dict):
+                continue
+            start_min = self._parse_time_to_minutes(str(slot.get("time_start", "")))
+            end_min = self._parse_time_to_minutes(str(slot.get("time_end", "")))
+            if start_min < 0 or end_min < 0:
+                continue
+            if start_min <= current_min < end_min:
+                current_idx = i
+                break
+        if current_idx < 0:
+            min_dist = float("inf")
+            for i, slot in enumerate(timeline):
+                if not isinstance(slot, dict):
+                    continue
+                start_min = self._parse_time_to_minutes(str(slot.get("time_start", "")))
+                end_min = self._parse_time_to_minutes(str(slot.get("time_end", "")))
+                if start_min < 0 or end_min < 0:
+                    continue
+                dist = min(abs(current_min - start_min), abs(current_min - end_min))
+                if dist < min_dist:
+                    min_dist = dist
+                    current_idx = i
+        if current_idx < 0:
+            return ""
+        parts = []
+        if current_idx > 0:
+            prev = timeline[current_idx - 1]
+            if isinstance(prev, dict):
+                parts.append(f"## 前一时段\n{self._format_timeline_slot(prev)}")
+            else:
+                parts.append("## 前一时段\n（今日起始时段）")
+        else:
+            parts.append("## 前一时段\n（今日起始时段）")
+        curr = timeline[current_idx]
+        parts.append(f"## 当前时段\n{self._format_timeline_slot(curr)}")
+        sub_events = schedule_data.get("sub_events")
+        sub_event_text = self._extract_sub_events_text(sub_events, current_idx, current_min)
+        if sub_event_text:
+            parts.append(f"## 当前时段细分\n{sub_event_text}")
+        if current_idx < len(timeline) - 1:
+            next_slot = timeline[current_idx + 1]
+            if isinstance(next_slot, dict):
+                parts.append(f"## 后一时段\n{self._format_timeline_slot(next_slot)}")
+            else:
+                parts.append("## 后一时段\n（已是今日最后时段）")
+        else:
+            parts.append("## 后一时段\n（已是今日最后时段）")
+        return "\n\n".join(parts)
+
     def _parse_delta_and_body(self, result: str) -> str:
         delta_match = re.match(r"^【变】(.+?)(?:\n|\r\n)([\s\S]*)", result)
         if delta_match:
@@ -223,16 +324,16 @@ class ReflectionGenerator(PersonaConfigMixin):
         mode = self._persona_value(persona_name, "thinking_mode", "适量")
         if mode == "简洁":
             mode_desc = "简洁"
-            length_hint = "- 控制在30字以内，只写此刻最核心的一点状态或念头，不要求补全所有维度"
-            mode_definition = "- 简洁：一瞬间的意识截面（30字内）。只写此刻最核心的一点状态或念头，不要求补全所有维度；允许只落一个动作、一个感受或一个注意力焦点，但必须自然完整，不能空泛。"
+            length_hint = "- 控制在30字以内，只写此刻最核心的一个念头或感受，不重复当前活动名称"
+            mode_definition = "- 简洁：一瞬间的意识截面（30字内）。只写此刻最核心的一个念头或感受，不重复当前活动名称（当前活动已在上下文中给出），只写活动中的内心落点。"
         elif mode == "适量":
             mode_desc = "适量"
-            length_hint = "- 控制在80字以内，围绕当前主活动，写出此刻在做什么与心里最突出的落点，必要时可带一个轻微环境细节或互动余温"
-            mode_definition = "- 适量：一小段完整的当下体验（80字内）。围绕当前主活动，写出“此刻在做什么”与“心里最突出的落点”，必要时可带一个轻微环境细节或互动余温。重点是有当下推进感，不要写成日程摘要。"
+            length_hint = "- 控制在80字以内，围绕当前细分活动，写出此刻在这个活动里的具体经历，不重复活动名称"
+            mode_definition = "- 适量：一小段完整的当下体验（80字内）。围绕当前细分活动，写出此刻在这个活动里的具体经历，而非复述活动本身；不重复活动名称，不写成日程摘要。"
         else:
             mode_desc = "丰富"
-            length_hint = "- 控制在150字以内，在不改变现实主线的前提下，可补充1—2个符合当前场景的小细节、小动作、环境互动或额外的小插曲，增强真实生活感"
-            mode_definition = "- 丰富：更有生活颗粒度的现场切片（150字内）。在不改变现实主线的前提下，可补充1—2个符合当前场景的小细节、小动作、环境互动或额外的小插曲，增强真实生活感。"
+            length_hint = "- 控制在120-150字，必须同时具备活动中的具体经历、环境感知、意识的自然偏移三个维度"
+            mode_definition = "- 丰富：更有生活颗粒度的现场切片（120-150字）。在当前细分活动的基础上，必须同时具备以下三个维度，缺一不可：\n  1. 活动中的具体经历（非活动本身的复述）\n  2. 环境感知\n  3. 意识的自然偏移——从当前活动中自然生发，而非凭空插入\n不重复活动名称，不写成日程摘要。"
 
         recent_messages_str = "\n".join(recent_messages) if recent_messages else "（暂无最近对话）"
 
@@ -246,10 +347,26 @@ class ReflectionGenerator(PersonaConfigMixin):
         if not state_info:
             state_info = "（暂无日程信息）"
 
-        slot_result = self._extract_current_schedule_slot(schedule, current_time)
-        current_slot_text = slot_result["slots_text"] if slot_result["found"] else ""
-        if not current_slot_text and schedule:
-            current_slot_text = schedule
+        sub_events = schedule_data.get("sub_events")
+        timeline = schedule_data.get("timeline")
+        has_valid_sub_events = isinstance(sub_events, list) and len(sub_events) > 0
+        has_valid_timeline = isinstance(timeline, list) and len(timeline) > 0
+        used_enhanced_format = False
+
+        if has_valid_sub_events and has_valid_timeline:
+            current_slot_text = self._build_enhanced_slot_text(schedule_data, current_time)
+            if current_slot_text:
+                used_enhanced_format = True
+            else:
+                slot_result = self._extract_current_schedule_slot(schedule, current_time)
+                current_slot_text = slot_result["slots_text"] if slot_result["found"] else ""
+                if not current_slot_text and schedule:
+                    current_slot_text = schedule
+        else:
+            slot_result = self._extract_current_schedule_slot(schedule, current_time)
+            current_slot_text = slot_result["slots_text"] if slot_result["found"] else ""
+            if not current_slot_text and schedule:
+                current_slot_text = schedule
 
         persona_name_text = persona_name or "（未绑定人格）"
         persona_desc_text = persona_desc or "（未获取到人格设定文本，请保持稳定自然、贴近既有人设气质的语气）"
@@ -276,7 +393,7 @@ class ReflectionGenerator(PersonaConfigMixin):
         if self.config.get("debug_mode", False):
             logger.info(
                 f"[ReflectionGenerator][debug] prompt state_info={state_info.strip()[:500]}, "
-                f"current_slot_fallback={slot_result.get('fallback')}, persona={persona_name_text}"
+                f"used_enhanced_format={used_enhanced_format}, persona={persona_name_text}"
             )
         return prompt
 
@@ -306,7 +423,7 @@ class ReflectionGenerator(PersonaConfigMixin):
         if "{current_slot}" in template:
             return template
         marker = "## 当前互动背景"
-        slot_block = "\n## 当前时段日程（必须以此为思考主线）\n以下是当前及相邻时段的日程安排，标记【当前时段】的为你此刻正在经历的场景：\n{current_slot}\n\n"
+        slot_block = "\n## 当前时段日程（必须以此为思考主线）\n{current_slot}\n\n"
         if marker in template:
             return template.replace(marker, slot_block + marker, 1)
         marker2 = "## 核心规则"
@@ -339,7 +456,6 @@ class ReflectionGenerator(PersonaConfigMixin):
 {state_info}
 
 ## 当前时段日程（必须以此为思考主线）
-以下是当前及相邻时段的日程安排，标记【当前时段】的为你此刻正在经历的场景：
 {current_slot}
 
 ## 当前互动背景（仅作情绪参考，禁止作为思考主体）
@@ -351,12 +467,12 @@ class ReflectionGenerator(PersonaConfigMixin):
 
 ## 核心规则（绝对不可违背）
 
-1. 【日程对齐——最高优先级】
-思考正文必须与【当前时段日程】对齐。你此刻正在做的事、所处的场景，必须来自当前时段的日程安排。
-- 当前时段日程是思考的绝对主线，任何其他信息都不得篡夺这个位置。
-- 即使最近对话内容很吸引人，也只能作为情绪的轻微点缀，不能让对话事件成为思考的主体。
-- 若当前时段是“吃饭”，思考就必须围绕吃饭场景；若当前时段是“跳舞”，思考就必须围绕跳舞场景。
-- 日程中的具体动作、场景细节是你取材的第一来源。
+1. 【活动锚定——细分定锚，骨架定向】
+当前细分活动是此刻的精确锚点，当前日程骨架是今日的方向感知。
+思考不重复活动名称，而是写出活动中的具体经历。
+- 思考必须从当前细分活动出发，不得矛盾
+- 思考可体现角色对今日轨迹的模糊感知，但这是自然感受而非日程复述
+- 即使最近对话内容很吸引人，也只能作为情绪的轻微点缀，不能让对话事件成为思考的主体
 
 2. 【思考不是复述日程】
 日程只是现实骨架，不是正文模板。
@@ -365,12 +481,12 @@ class ReflectionGenerator(PersonaConfigMixin):
 - 在日程提供的场景框架内，写出真实的内心体验和意识流动。
 
 3. 【信息选择顺序必须明确】
-当输入信息很多时，按以下优先级取材：
-- 第一优先：当前时段日程中正在发生的核心活动 / 场景
-- 第二优先：在此场景中此刻最突出的身体感受、动作细节、环境互动
-- 第三优先：此刻最突出的情绪、注意力落点
-- 第四优先：最近对话带来的轻微情绪残留（最多一句话带过，不可展开）
-- 第五优先：最近思考提供的连续性线索
+- 第一优先：当前细分活动中的具体经历
+- 第二优先：从当前经历中自然生发的偏移
+- 第三优先：此刻最突出的情绪
+- 第四优先：对今日轨迹的模糊感知
+- 第五优先：最近对话带来的轻微情绪残留（最多一句话带过，不可展开）
+- 第六优先：最近思考提供的连续性线索
 - 最低优先：穿搭、外貌、材质、配色、饰品等外观信息
 
 4. 【对话内容严格降权】
