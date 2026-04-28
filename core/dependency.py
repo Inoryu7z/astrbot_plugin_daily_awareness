@@ -282,6 +282,22 @@ class DependencyManager:
             store_key = service.normalize_persona_key(resolved_persona_name, resolved_persona_id)
             result["persona_name"] = resolved_persona_name or store_key
 
+            effective_target_date = str(target_date or "").strip()
+            if effective_target_date and hasattr(service, "store") and service.store is not None:
+                direct_schedule = service.store.get_schedule_for_date(store_key, effective_target_date)
+                if direct_schedule and not direct_schedule.get("meta", {}).get("error"):
+                    logger.info(
+                        f"[DayMind] ensure_today_schedule: get_schedule_data reported missing but store has valid schedule, "
+                        f"skipping regeneration: store_key={store_key}, target_date={effective_target_date}"
+                    )
+                    result.update({
+                        "status": "existing",
+                        "message": "目标日期日程已存在（通过存储直接验证）",
+                        "data": direct_schedule,
+                        "generated_now": False,
+                    })
+                    return result
+
             if debug:
                 logger.info(
                     f"[DayMind][debug] ensure_today_schedule start: session={session_id}, requested_persona={persona_name}, "

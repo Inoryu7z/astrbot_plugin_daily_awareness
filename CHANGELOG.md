@@ -1,3 +1,14 @@
+### v1.6.3
+
+**🐛 修复 ensure_today_schedule 可能覆盖已有日程的严重问题**
+
+* 修复 `ensure_today_schedule` 在 `get_schedule_data` 因瞬态错误返回空字典时，误判日程缺失并触发重新生成的问题
+* 新增直接通过 Dayflow store 的 `get_schedule_for_date` 二次验证机制
+* 如果 store 中存在有效日程（无 error 标记），跳过重新生成，返回已有日程
+* 防止 DayMind 的反思/日记功能意外覆盖用户已生成的日程
+
+---
+
 ### v1.6.2
 
 ** 修复 ensure_today_schedule 日程未持久化的严重 bug**
