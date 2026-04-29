@@ -416,25 +416,32 @@ class ReflectionGenerator(PersonaConfigMixin):
             elif mode == "丰富":
                 length_hint = length_hint_basic
 
+        format_kwargs = dict(
+            time=current_time,
+            weekday=weekday,
+            persona_name=persona_name_text,
+            persona_desc=persona_desc_text,
+            state_info=state_info.strip(),
+            current_slot=current_slot_text,
+            recent_messages=recent_messages_str,
+            mode_desc=mode_desc,
+            mode_definition=mode_definition,
+            length_hint=length_hint,
+            recent_awareness=recent_awareness_text,
+            rule_1=rule_1,
+            rule_3=rule_3,
+        )
         try:
-            prompt = template.format(
-                time=current_time,
-                weekday=weekday,
-                persona_name=persona_name_text,
-                persona_desc=persona_desc_text,
-                state_info=state_info.strip(),
-                current_slot=current_slot_text,
-                recent_messages=recent_messages_str,
-                mode_desc=mode_desc,
-                mode_definition=mode_definition,
-                length_hint=length_hint,
-                recent_awareness=recent_awareness_text,
-                rule_1=rule_1,
-                rule_3=rule_3,
-            )
+            prompt = template.format(**format_kwargs)
         except KeyError as e:
-            logger.warning(f"[ReflectionGenerator] 模板变量缺失: {e}")
-            prompt = template
+            missing_key = str(e).strip("'")
+            logger.warning(f"[ReflectionGenerator] 模板变量缺失: {missing_key}，使用部分格式化")
+            from string import Formatter
+            known_keys = set(format_kwargs.keys())
+            used_keys = {fname for _, fname, _, _ in Formatter().parse(template) if fname}
+            for k in used_keys - known_keys:
+                format_kwargs[k] = f"{{{{{k}}}}}"
+            prompt = template.format(**format_kwargs)
 
         if self.config.get("debug_mode", False):
             logger.info(
