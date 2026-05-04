@@ -287,7 +287,7 @@ class DiaryOperations:
             await self._apply_diary_retention()
             await self._apply_dream_retention()
             if not manual:
-                await self._push_diary_to_targets(diary_content, persona_name)
+                await self._push_diary_to_targets(diary_content, persona_name, date_str)
             state["diary_generated_today"] = True
             state["last_diary_date"] = date_str
             state["last_diary_failure_time"] = None
@@ -295,7 +295,7 @@ class DiaryOperations:
             state["last_diary_failed_trigger_key"] = ""
             self._clear_diary_error(persona_name)
             self._persist_state()
-            return {"status": "success", "content": diary_content, "marked_deleted": int(regeneration_info.get('updated', 0) or 0), "schedule_data": (ensured_schedule or {}).get("data") or {}, "schedule_generated_now": bool((ensured_schedule or {}).get("generated_now"))}
+            return {"status": "success", "content": diary_content, "date": date_str, "marked_deleted": int(regeneration_info.get('updated', 0) or 0), "schedule_data": (ensured_schedule or {}).get("data") or {}, "schedule_generated_now": bool((ensured_schedule or {}).get("generated_now"))}
         except Exception as e:
             logger.error(f"[Scheduler] 日记生成流程出错: {e}", exc_info=True)
             self._record_diary_error(persona_name, "diary_exception", str(e))
@@ -415,7 +415,7 @@ class DiaryOperations:
         except Exception as e:
             logger.debug(f"[Scheduler] 应用梦境历史轮换失败: {e}")
 
-    async def _push_diary_to_targets(self, content: str, persona_name: str | None = None):
+    async def _push_diary_to_targets(self, content: str, persona_name: str | None = None, date_str: str | None = None):
         targets = self._persona_value(persona_name, "diary_push_targets", self.config.get("diary_push_targets", []))
         if not targets:
             logger.debug("[Scheduler] 未配置推送目标")
@@ -424,9 +424,9 @@ class DiaryOperations:
         enable_image = bool(self._persona_value(persona_name, "enable_diary_image", False))
         image_bytes = None
         if enable_image and self.diary_renderer:
-            date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            render_date = str(date_str or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
             image_bytes = await asyncio.to_thread(
-                self.diary_renderer.render, content, date_str, persona_name or ""
+                self.diary_renderer.render, content, render_date, persona_name or ""
             )
 
         for target in targets:
